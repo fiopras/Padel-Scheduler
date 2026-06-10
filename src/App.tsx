@@ -22,8 +22,7 @@ import { generateSchedule, recalculateLeaderboard } from './utils/scheduler';
 import {
   parsePlayersFromExcel,
   exportScheduleToExcel,
-  exportLeaderboardToExcel,
-  exportEntireWorkbookToExcel
+  exportLeaderboardToExcel
 } from './utils/excel';
 
 // Component imports
@@ -326,11 +325,6 @@ export default function App() {
     showNotification('Klasemen Leaderboard berhasil di-export ke Excel!');
   };
 
-  const handleExportUnifiedReport = () => {
-    exportEntireWorkbookToExcel(players, matches, currentLeaderboard);
-    showNotification('Semua Event (Jadwal, Hasil, Leaderboard, & Statistik) diexport dalam Satu File Excel!');
-  };
-
   const handleClearAll = () => {
     if (confirm('Apakah Anda yakin ingin menghapus seluruh data sirkuit atlet dan jadwal?')) {
       setPlayers([]);
@@ -587,16 +581,6 @@ export default function App() {
                 Export Jadwal
               </button>
             )}
-
-            {/* Combined Complete Download Button */}
-            <button
-              id="btn-export-all-excel"
-              onClick={handleExportUnifiedReport}
-              className="px-4 py-2 text-xs font-black bg-teal-500 hover:bg-teal-400 text-slate-950 rounded-xl shadow-lg shadow-teal-500/10 transition-all flex items-center gap-2 font-display uppercase tracking-wider cursor-pointer"
-            >
-              <Download className="w-3.5 h-3.5" />
-              Download Full Event Report
-            </button>
 
             {/* Clear Database Utility */}
             <button
