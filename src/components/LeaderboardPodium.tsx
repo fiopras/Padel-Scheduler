@@ -1,0 +1,294 @@
+import React from 'react';
+import { motion } from 'motion/react';
+import { Trophy, Medal, Search, Filter } from 'lucide-react';
+import { Player } from '../types';
+
+interface LeaderboardPodiumProps {
+  leaderboard: Player[];
+}
+
+export default function LeaderboardPodium({ leaderboard }: LeaderboardPodiumProps) {
+  const [searchTerm, setSearchTerm] = React.useState('');
+  const [genderFilter, setGenderFilter] = React.useState<string>('All');
+  const [skillFilter, setSkillFilter] = React.useState<string>('All');
+
+  // Filter the stats
+  const filteredLeaderboard = leaderboard.filter((p) => {
+    const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesGender = genderFilter === 'All' || p.gender === genderFilter;
+    const matchesSkill = skillFilter === 'All' || p.skillLevel === skillFilter;
+    return matchesSearch && matchesGender && matchesSkill;
+  });
+
+  // Podium slots
+  const first = leaderboard[0];
+  const second = leaderboard[1];
+  const third = leaderboard[2];
+
+  return (
+    <div className="space-y-8">
+      {/* 3D Premium Athletic Podium */}
+      {leaderboard.length >= 2 && (
+        <div id="leaderboard-podium-container" className="pt-8 pb-6 px-6 bg-[#121B2E]/45 border border-slate-850/80 rounded-3xl shadow-2xl relative overflow-hidden flex flex-col items-center backdrop-blur-md">
+          {/* Subtle decoration lines inside podium container */}
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-teal-500/0 via-teal-400 to-amber-500/0 opacity-40 animate-pulse" />
+          <div className="absolute -top-12 -left-12 w-48 h-48 bg-teal-500/5 rounded-full blur-3xl pointer-events-none" />
+          <div className="absolute -bottom-16 -right-16 w-56 h-56 bg-amber-500/5 rounded-full blur-3xl pointer-events-none" />
+
+          <div className="text-center mb-8">
+            <span className="px-3.5 py-1 text-[10px] font-bold text-teal-400 bg-teal-500/10 border border-teal-500/20 rounded-full uppercase tracking-widest font-display">
+              Top Performance Athletes
+            </span>
+            <h2 className="text-2xl font-black text-white mt-2 font-display tracking-tight uppercase">Podium Klasemen</h2>
+          </div>
+
+          <div className="flex items-end justify-center w-full max-w-sm sm:max-w-lg h-56 sm:h-60 mt-4 gap-2 sm:gap-4 md:gap-5">
+            {/* 2nd Place: Silver */}
+            {second && (
+              <motion.div
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.2 }}
+                className="flex flex-col items-center flex-1 group min-w-0"
+              >
+                <div className="relative mb-2">
+                  <div className="w-10 h-10 sm:w-14 sm:h-14 bg-slate-900 rounded-full border-2 border-slate-400 flex items-center justify-center text-white font-extrabold text-xs sm:text-base shadow-xl group-hover:scale-105 transition-all duration-350">
+                    {second.name.substring(0, 2).toUpperCase()}
+                  </div>
+                  <span className="absolute -top-1 -right-1 bg-slate-350 text-slate-950 font-black text-[9px] sm:text-[11px] rounded-full w-4 h-4 sm:w-5 sm:h-5 flex items-center justify-center border border-slate-950 shadow-md">
+                    2
+                  </span>
+                </div>
+                <div className="text-center mb-1 max-w-[75px] sm:max-w-28 leading-tight min-w-0 w-full px-1">
+                  <p className="text-[10px] sm:text-xs font-bold text-slate-200 truncate font-sans" title={second.name}>{second.name}</p>
+                  <p className="text-[9px] sm:text-[10px] font-black text-slate-400 font-mono mt-0.5">{second.points} PTS</p>
+                </div>
+                <div className="w-full h-18 sm:h-24 bg-gradient-to-t from-slate-900 to-slate-800/80 border border-slate-700/60 rounded-t-2xl flex flex-col items-center justify-center shadow-lg relative overflow-hidden">
+                  <div className="absolute top-0 inset-x-0 h-1 bg-slate-400 opacity-80" />
+                  <span className="text-xl sm:text-3xl font-black text-slate-400 font-display">2ND</span>
+                  <span className="text-[8px] sm:text-[9px] font-bold tracking-widest text-[#94A3B8] uppercase mt-0.5">Silver</span>
+                </div>
+              </motion.div>
+            )}
+
+            {/* 1st Place: Gold */}
+            {first && (
+              <motion.div
+                initial={{ opacity: 0, y: 40 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.1 }}
+                className="flex flex-col items-center flex-1 group min-w-0"
+              >
+                <div className="relative mb-2">
+                  <div className="w-13 h-13 sm:w-18 sm:h-18 bg-[#1e1b12] rounded-full border-2 border-amber-400 flex items-center justify-center text-white font-extrabold text-sm sm:text-lg shadow-2xl ring-2 sm:ring-4 ring-amber-400/15 group-hover:scale-105 transition-all duration-350">
+                    {first.name.substring(0, 2).toUpperCase()}
+                  </div>
+                  <motion.span
+                    animate={{ rotate: [0, -10, 10, -10, 0] }}
+                    transition={{ repeat: Infinity, duration: 2, repeatDelay: 1 }}
+                    className="absolute -top-1.5 -right-1.5 bg-gradient-to-r from-amber-400 to-yellow-300 text-slate-950 font-black text-[10px] sm:text-xs rounded-full w-5 h-5 sm:w-6 sm:h-6 flex items-center justify-center shadow-md border-2 border-slate-950"
+                  >
+                    👑
+                  </motion.span>
+                </div>
+                <div className="text-center mb-1 max-w-[85px] sm:max-w-32 leading-tight min-w-0 w-full px-1">
+                  <p className="text-xs sm:text-sm font-black text-white truncate font-sans" title={first.name}>{first.name}</p>
+                  <p className="text-[10px] sm:text-xs font-black text-amber-400 font-mono mt-0.5">{first.points} PTS</p>
+                </div>
+                <div className="w-full h-24 sm:h-32 bg-gradient-to-t from-slate-900 to-[#1e1e2d] border border-amber-500/30 rounded-t-2xl flex flex-col items-center justify-center shadow-2xl relative overflow-hidden">
+                  <div className="absolute top-0 inset-x-0 h-1.5 bg-gradient-to-r from-amber-400 via-yellow-300 to-amber-500 shadow-md" />
+                  <span className="text-2xl sm:text-4xl font-black text-amber-400 font-display">1ST</span>
+                  <span className="text-[8px] sm:text-[9px] font-bold tracking-widest text-amber-400 uppercase mt-0.5 font-display">Champion</span>
+                </div>
+              </motion.div>
+            )}
+
+            {/* 3rd Place: Bronze */}
+            {third && (
+              <motion.div
+                initial={{ opacity: 0, y: 30 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.5, delay: 0.3 }}
+                className="flex flex-col items-center flex-1 group min-w-0"
+              >
+                <div className="relative mb-2">
+                  <div className="w-9 h-9 sm:w-13 sm:h-13 bg-slate-900 rounded-full border-2 border-orange-650 flex items-center justify-center text-white font-extrabold text-xs sm:text-base shadow-xl group-hover:scale-105 transition-all duration-350">
+                    {third.name.substring(0, 2).toUpperCase()}
+                  </div>
+                  <span className="absolute -top-1 -right-1 bg-orange-600 text-white font-black text-[9px] sm:text-[11px] rounded-full w-4 h-4 sm:w-5 sm:h-5 flex items-center justify-center border border-slate-950 shadow-md">
+                    3
+                  </span>
+                </div>
+                <div className="text-center mb-1 max-w-[70px] sm:max-w-28 leading-tight min-w-0 w-full px-1">
+                  <p className="text-[10px] sm:text-xs font-bold text-slate-200 truncate font-sans" title={third.name}>{third.name}</p>
+                  <p className="text-[9px] sm:text-[10px] font-black text-slate-405 font-mono mt-0.5">{third.points} PTS</p>
+                </div>
+                <div className="w-full h-14 sm:h-18 bg-gradient-to-t from-slate-900 to-slate-800/80 border border-slate-700/60 rounded-t-2xl flex flex-col items-center justify-center shadow-lg relative overflow-hidden">
+                  <div className="absolute top-0 inset-x-0 h-1 bg-orange-650 opacity-80" />
+                  <span className="text-lg sm:text-2xl font-black text-orange-500 font-display">3RD</span>
+                  <span className="text-[8px] sm:text-[9px] font-bold tracking-widest text-orange-400 uppercase mt-0.5">Bronze</span>
+                </div>
+              </motion.div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Leaderboard Table Workspace */}
+      <div className="bg-[#121B2E]/40 rounded-3xl border border-slate-800/80 overflow-hidden backdrop-blur-md">
+        {/* Table Filters Header */}
+        <div className="p-5 border-b border-slate-800/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-bold text-white flex items-center gap-2 font-display uppercase tracking-tight">
+              <Trophy className="w-5 h-5 text-amber-500" />
+              Klasemen Klasifikasi
+            </h3>
+            <p className="text-xs text-slate-400">Peringkat atlet berdasarkan poin, selisih game, dan rasio kemenangan.</p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Search */}
+            <div className="relative">
+              <input
+                id="search-player-leaderboard"
+                type="text"
+                placeholder="Cari atlet..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full md:w-48 bg-slate-950/80 border border-slate-800 focus:border-teal-400 focus:ring-1 focus:ring-teal-400/20 rounded-xl py-1.5 pl-8 pr-3 text-xs text-white placeholder-slate-600 focus:outline-none transition-colors"
+              />
+              <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+            </div>
+
+            {/* Gender Filter */}
+            <select
+              id="filter-gender-leaderboard"
+              value={genderFilter}
+              onChange={(e) => setGenderFilter(e.target.value)}
+              className="bg-slate-950/80 border border-slate-800 focus:border-teal-400 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none transition-all"
+            >
+              <option value="All">Semua Gender</option>
+              <option value="Laki-laki">Laki-laki</option>
+              <option value="Perempuan">Perempuan</option>
+            </select>
+
+            {/* Skill Filter */}
+            <select
+              id="filter-skill-leaderboard"
+              value={skillFilter}
+              onChange={(e) => setSkillFilter(e.target.value)}
+              className="bg-slate-950/80 border border-slate-800 focus:border-teal-400 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none transition-all"
+            >
+              <option value="All">Semua Skill</option>
+              <option value="Beginner">Beginner</option>
+              <option value="Intermediate">Intermediate</option>
+              <option value="Advanced">Advanced</option>
+            </select>
+          </div>
+        </div>
+
+        {/* Table Body */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-950/40 text-[10px] font-bold text-[#94A3B8] uppercase tracking-widest border-b border-slate-800/80 font-display">
+                <th className="py-4 px-4 text-center">Rank</th>
+                <th className="py-4 px-4">Nama Athlete</th>
+                <th className="py-4 px-4 text-center">Gender</th>
+                <th className="py-4 px-4">Skill Level</th>
+                <th className="py-4 px-4 text-center">Main</th>
+                <th className="py-4 px-4 text-center">Menang</th>
+                <th className="py-4 px-4 text-center">Kalah</th>
+                <th className="py-4 px-4 text-center">Win Rate</th>
+                <th className="py-4 px-4 text-center">Game Diff</th>
+                <th className="py-4 px-4 text-right pr-6">Points</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/40 text-xs text-slate-300">
+              {filteredLeaderboard.length === 0 ? (
+                <tr>
+                  <td colSpan={10} className="py-8 text-center text-slate-500 font-sans font-medium">
+                    Belum ada data atlet yang sesuai.
+                  </td>
+                </tr>
+              ) : (
+                filteredLeaderboard.map((player, index) => {
+                  // Find original rank based on index in total sorted leaderboard
+                  const originalRank = leaderboard.findIndex((p) => p.id === player.id) + 1;
+
+                  // Rank Badge Render
+                  let rankBadge = `${originalRank}`;
+                  if (originalRank === 1) rankBadge = '🥇';
+                  else if (originalRank === 2) rankBadge = '🥈';
+                  else if (originalRank === 3) rankBadge = '🥉';
+
+                  const diff = player.gamesWon - player.gamesLost;
+
+                  return (
+                    <tr
+                      key={player.id}
+                      className="hover:bg-slate-805/30 transition-all duration-150 text-slate-300 group"
+                    >
+                      <td className="py-4 px-4 font-black text-center text-sm w-16">
+                        <span className={originalRank <= 3 ? 'text-lg' : 'text-slate-500 font-bold font-mono'}>
+                          {rankBadge}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 font-bold text-white group-hover:text-teal-400 transition-colors">
+                        {player.name}
+                      </td>
+                      <td className="py-4 px-4 text-center">
+                        <span className="px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-slate-950/60 border border-slate-800 text-slate-350">
+                          {player.gender}
+                        </span>
+                      </td>
+                      <td className="py-4 px-4 text-slate-300">
+                        <span
+                          className={`inline-block w-2 h-2 rounded-full mr-2 ${
+                            player.skillLevel === 'Advanced'
+                              ? 'bg-amber-500 shadow-md shadow-amber-500/20'
+                              : player.skillLevel === 'Intermediate'
+                              ? 'bg-teal-405 shadow-md shadow-teal-500/20'
+                              : 'bg-slate-500'
+                          }`}
+                        />
+                        <span className="font-semibold text-slate-300">{player.skillLevel}</span>
+                      </td>
+                      <td className="py-4 px-4 text-center font-mono font-medium">{player.matchesPlayed}</td>
+                      <td className="py-4 px-4 text-center font-bold text-teal-400 font-mono">
+                        {player.matchesWon}
+                      </td>
+                      <td className="py-4 px-4 text-center font-medium text-slate-500 font-mono">
+                        {player.matchesLost}
+                      </td>
+                      <td className="py-4 px-4 text-center font-mono">
+                        <div className="flex flex-col items-center">
+                          <span className="font-bold text-slate-200">{player.winRate}%</span>
+                          <div className="w-12 bg-slate-900 h-1 rounded-full mt-1.5 overflow-hidden">
+                            <div
+                              className="bg-gradient-to-r from-teal-500 to-teal-400 h-full rounded-full"
+                              style={{ width: `${player.winRate}%` }}
+                            />
+                          </div>
+                        </div>
+                      </td>
+                      <td className="py-4 px-4 text-center font-mono">
+                        <span className={diff > 0 ? 'text-teal-400 font-bold' : diff < 0 ? 'text-rose-500 font-semibold' : 'text-slate-405'}>
+                          {diff > 0 ? `+${diff}` : diff}
+                        </span>
+                        <span className="text-[9px] text-slate-500 ml-1 font-sans font-semibold">({player.gamesWon}:{player.gamesLost})</span>
+                      </td>
+                      <td className="py-4 px-4 text-right pr-6 font-extrabold text-amber-500 text-sm font-mono">
+                        {player.points}
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
