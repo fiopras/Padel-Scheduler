@@ -12,18 +12,104 @@ import {
   Cell
 } from 'recharts';
 import { Award, Zap } from 'lucide-react';
-import { Player, Match } from '../types';
+import { Player, Match, PadelEvent } from '../types';
+import { recalculateLeaderboard } from '../utils/scheduler';
 
 interface AnalyticsChartsProps {
   players: Player[];
   matches: Match[];
+  events?: PadelEvent[];
+  activeEventId?: string | null;
 }
 
-export default function AnalyticsCharts({ players, matches }: AnalyticsChartsProps) {
-  const completedMatches = matches.filter((m) => m.status === 'Completed');
+export default function AnalyticsCharts({
+  players = [],
+  matches = [],
+  events = [],
+  activeEventId = null
+}: AnalyticsChartsProps) {
+  const [selectedEventId, setSelectedEventId] = React.useState<string>(() => {
+    return activeEventId || 'all';
+  });
+
+  // Sync state if activeEventId changes
+  React.useEffect(() => {
+    if (activeEventId) {
+      setSelectedEventId(activeEventId);
+    }
+  }, [activeEventId]);
+
+  // Determine which players and matches data to display
+  let displayPlayers: Player[] = [];
+  let displayMatches: Match[] = [];
+
+  if (selectedEventId === 'all') {
+    // Aggregate player stats across all recorded events
+    const playerAccumulator: Record<string, Player> = {};
+    const allMatchesCollected: Match[] = [];
+
+    events.forEach((evt) => {
+      if (Array.isArray(evt.matches)) {
+        allMatchesCollected.push(...evt.matches);
+      }
+
+      // Generate accurate stats of this event by recalculating
+      const evtLeaderboard = recalculateLeaderboard(
+        evt.players || [],
+        evt.matches || [],
+        evt.config?.winPoints ?? 2,
+        evt.config?.drawPoints ?? 1,
+        evt.format ?? 'Americano'
+      );
+
+      evtLeaderboard.forEach((p) => {
+        const key = p.name.trim().toLowerCase();
+        if (!playerAccumulator[key]) {
+          playerAccumulator[key] = { ...p };
+        } else {
+          const acc = playerAccumulator[key];
+          acc.matchesPlayed += p.matchesPlayed;
+          acc.matchesWon += p.matchesWon;
+          acc.matchesLost += p.matchesLost;
+          acc.gamesWon += p.gamesWon;
+          acc.gamesLost += p.gamesLost;
+          acc.points += p.points;
+          acc.playingTime += p.playingTime;
+        }
+      });
+    });
+
+    // Recompute win rates for consolidated stats
+    displayPlayers = Object.values(playerAccumulator).map((p) => {
+      const winRate = p.matchesPlayed > 0 ? Math.round((p.matchesWon / p.matchesPlayed) * 100) : 0;
+      return {
+        ...p,
+        winRate
+      };
+    }).sort((a, b) => b.winRate - a.winRate);
+
+    displayMatches = allMatchesCollected;
+  } else {
+    const foundEvent = events.find((e) => e.id === selectedEventId);
+    if (foundEvent) {
+      displayPlayers = recalculateLeaderboard(
+        foundEvent.players || [],
+        foundEvent.matches || [],
+        foundEvent.config?.winPoints ?? 2,
+        foundEvent.config?.drawPoints ?? 1,
+        foundEvent.format ?? 'Americano'
+      );
+      displayMatches = foundEvent.matches || [];
+    } else {
+      displayPlayers = players;
+      displayMatches = matches;
+    }
+  }
+
+  const completedMatches = displayMatches.filter((m) => m.status === 'Completed');
 
   // 1. Data Win Rate (Top 8 Players)
-  const winRateData = [...players]
+  const winRateData = [...displayPlayers]
     .sort((a, b) => b.winRate - a.winRate)
     .slice(0, 8)
     .map((p) => ({
@@ -34,7 +120,7 @@ export default function AnalyticsCharts({ players, matches }: AnalyticsChartsPro
 
   // 2. Court Match Distribution (How busy are the courts?)
   const courtCounts: Record<string, number> = {};
-  matches.forEach((m) => {
+  displayMatches.forEach((m) => {
     courtCounts[m.courtName] = (courtCounts[m.courtName] || 0) + 1;
   });
   const courtData = Object.keys(courtCounts).map((court) => ({
@@ -45,7 +131,42 @@ export default function AnalyticsCharts({ players, matches }: AnalyticsChartsPro
   const COLORS = ['#14B8A6', '#F59E0B', '#3B82F6', '#EC4899', '#8B5CF6'];
 
   return (
-    <div id="analytics-charts" className="space-y-8">
+    <div id="analytics-charts" className="space-y-6">
+      {/* Event Filter Selection Header Bar */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-5 bg-[#0B1220]/70 border border-slate-900 rounded-3xl backdrop-blur-md">
+        <div className="space-y-1">
+          <span className="text-[10px] bg-teal-500/10 text-teal-400 font-extrabold border border-teal-500/20 py-0.5 px-2.5 rounded-full font-mono uppercase tracking-widest">
+            FILTER DATA ANALITIK
+          </span>
+          <h3 className="text-sm font-black text-white uppercase tracking-wider font-display">
+            Analitik Performa Atlet
+          </h3>
+          <p className="text-[11px] text-[#94A3B8] font-medium">
+            Saring visualisasi kemenangan sirkuit berdasarkan event terpilih atau akumulasi statistik keseluruhan.
+          </p>
+        </div>
+
+        {/* Clean Dropdown */}
+        {events.length > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-slate-400 font-sans font-bold shrink-0">Filter Event:</span>
+            <select
+              id="analytics-event-filter-select"
+              value={selectedEventId}
+              onChange={(e) => setSelectedEventId(e.target.value)}
+              className="px-4 py-2 bg-slate-950 border border-slate-800 rounded-xl text-teal-350 font-display text-xs font-bold leading-normal focus:outline-none focus:ring-1 focus:ring-teal-500/30 cursor-pointer min-w-[220px]"
+            >
+              <option value="all">🏆 Semua Event (Akumulasi)</option>
+              {events.map((evt) => (
+                <option key={evt.id} value={evt.id}>
+                  📅 {evt.name} ({new Date(evt.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+      </div>
+
       {/* Main Stats Charts Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Win Rate Chart */}

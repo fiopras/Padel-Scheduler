@@ -156,8 +156,16 @@ export default function App() {
 
   // Event History and active event
   const [events, setEvents] = React.useState<PadelEvent[]>(() => {
-    const saved = localStorage.getItem('court_master_events');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('court_master_events');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.error("Failed to parse events from localStorage:", e);
+    }
+    return [];
   });
   const [activeEventId, setActiveEventId] = React.useState<string | null>(() => {
     return localStorage.getItem('court_master_active_event_id') || null;
@@ -924,7 +932,12 @@ export default function App() {
                   )}
 
                   {/* Analytics graphics visualizations */}
-                  <AnalyticsCharts players={currentLeaderboard} matches={matches} />
+                  <AnalyticsCharts
+                    players={currentLeaderboard}
+                    matches={matches}
+                    events={events}
+                    activeEventId={activeEventId}
+                  />
                 </div>
               )}
 
