@@ -15,9 +15,10 @@ import {
   RotateCcw,
   Zap,
   Info,
-  Coins
+  Coins,
+  Compass
 } from 'lucide-react';
-import { Player, Match, TournamentConfig, GenderType, SkillLevelType } from './types';
+import { Player, Match, TournamentConfig, GenderType, SkillLevelType, TournamentFormat, ScoringType, PadelEvent } from './types';
 import { generateSchedule, recalculateLeaderboard } from './utils/scheduler';
 import {
   parsePlayersFromExcel,
@@ -32,6 +33,8 @@ import PlayerManager from './components/PlayerManager';
 import AnalyticsCharts from './components/AnalyticsCharts';
 import MatchList from './components/MatchList';
 import CourtFeeCalculator from './components/CourtFeeCalculator';
+import EventManager from './components/EventManager';
+import UserFlowWizard from './components/UserFlowWizard';
 
 // Seed Initial Data
 const SEED_PLAYERS: Player[] = [
@@ -129,11 +132,14 @@ const SEED_MATCHES: Match[] = [
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = React.useState<'dashboard' | 'players' | 'matches' | 'leaderboard' | 'patungan'>('dashboard');
+  const [activeTab, setActiveTab] = React.useState<'dashboard' | 'events' | 'players' | 'matches' | 'leaderboard' | 'patungan'>('dashboard');
 
   // Application database state
   const [players, setPlayers] = React.useState<Player[]>(SEED_PLAYERS);
   const [matches, setMatches] = React.useState<Match[]>(SEED_MATCHES);
+
+  // Reference to track currently loaded/synchronized event to prevent race-condition wipes
+  const loadedEventIdRef = React.useRef<string | null>(null);
 
   // Scheduler Config State
   const [config, setConfig] = React.useState<TournamentConfig>({
@@ -142,11 +148,47 @@ export default function App() {
     format: 'Doubles',
     winPoints: 2,
     drawPoints: 1,
+    tournamentFormat: 'Americano',
+    scoringType: 'BestOf',
+    scoringValue: 4
   });
   const [roundsCount, setRoundsCount] = React.useState<number>(3);
 
+  // Event History and active event
+  const [events, setEvents] = React.useState<PadelEvent[]>(() => {
+    const saved = localStorage.getItem('court_master_events');
+    return saved ? JSON.parse(saved) : [];
+  });
+  const [activeEventId, setActiveEventId] = React.useState<string | null>(() => {
+    return localStorage.getItem('court_master_active_event_id') || null;
+  });
+
   // UI Notification alert
   const [notification, setNotification] = React.useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  const [confirmModal, setConfirmModal] = React.useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    onConfirm: () => {}
+  });
+
+  const triggerConfirm = (title: string, message: string, onConfirm: () => void) => {
+    setConfirmModal({
+      isOpen: true,
+      title,
+      message,
+      onConfirm: () => {
+        onConfirm();
+        setConfirmModal((prev) => ({ ...prev, isOpen: false }));
+      }
+    });
+  };
 
   const showNotification = (text: string, type: 'success' | 'error' = 'success') => {
     setNotification({ text, type });
@@ -155,10 +197,112 @@ export default function App() {
     }, 4000);
   };
 
+  // Seed initial events if none exist
+  React.useEffect(() => {
+    if (events.length === 0) {
+      const defaultEvent: PadelEvent = {
+        id: 'evt-seed',
+        name: 'Friday Night Padel (Contoh)',
+        createdAt: new Date().toISOString(),
+        format: 'Americano',
+        players: SEED_PLAYERS,
+        matches: SEED_MATCHES,
+        config: {
+          courtCount: 2,
+          matchDuration: 20,
+          format: 'Doubles',
+          winPoints: 2,
+          drawPoints: 1,
+          scoringType: 'BestOf',
+          scoringValue: 4,
+          roundsCount: 3,
+          tournamentFormat: 'Americano'
+        }
+      };
+      setEvents([defaultEvent]);
+      setActiveEventId('evt-seed');
+      localStorage.setItem('court_master_events', JSON.stringify([defaultEvent]));
+      localStorage.setItem('court_master_active_event_id', 'evt-seed');
+    }
+  }, []);
+
+  // Save events to localStorage whenever they change
+  React.useEffect(() => {
+    if (events.length > 0) {
+      localStorage.setItem('court_master_events', JSON.stringify(events));
+    }
+  }, [events]);
+
+  React.useEffect(() => {
+    if (activeEventId) {
+      localStorage.setItem('court_master_active_event_id', activeEventId);
+    } else {
+      localStorage.removeItem('court_master_active_event_id');
+    }
+  }, [activeEventId]);
+
+  // Load active event data into states when activeEventId changes
+  React.useEffect(() => {
+    if (!activeEventId) return;
+    const current = events.find(e => e.id === activeEventId);
+    if (current) {
+      // Step 1: Set our lock reference to current active event ID BEFORE updating state
+      loadedEventIdRef.current = activeEventId;
+      setPlayers(current.players);
+      setMatches(current.matches);
+      setConfig({
+        courtCount: current.config.courtCount,
+        matchDuration: current.config.matchDuration,
+        format: current.config.format,
+        winPoints: current.config.winPoints,
+        drawPoints: current.config.drawPoints,
+        tournamentFormat: current.format,
+        scoringType: current.config.scoringType || 'BestOf',
+        scoringValue: current.config.scoringValue || 4,
+        partnerMap: current.partnerMap
+      });
+      setRoundsCount(current.config.roundsCount || 3);
+    }
+  }, [activeEventId]);
+
+  // Sync state changes back to events list
+  React.useEffect(() => {
+    if (!activeEventId) return;
+    // VERY IMPORTANT: Prevent syncing back stale players/matches from the previous event
+    // while the activeEventId loading transition is currently running!
+    if (loadedEventIdRef.current !== activeEventId) {
+      return;
+    }
+
+    setEvents(prev => prev.map(e => {
+      if (e.id === activeEventId) {
+        return {
+          ...e,
+          players,
+          matches,
+          config: {
+            ...e.config,
+            courtCount: config.courtCount,
+            matchDuration: config.matchDuration,
+            format: config.format,
+            winPoints: config.winPoints,
+            drawPoints: config.drawPoints,
+            scoringType: config.scoringType || 'BestOf',
+            scoringValue: config.scoringValue || 4,
+            roundsCount: roundsCount
+          },
+          format: config.tournamentFormat || 'Americano',
+          partnerMap: config.partnerMap
+        };
+      }
+      return e;
+    }));
+  }, [players, matches, config, roundsCount, activeEventId]);
+
   // Recalculate leaderboard whenever matches status/scores change
   const currentLeaderboard = React.useMemo(() => {
-    return recalculateLeaderboard(players, matches, config.winPoints, config.drawPoints);
-  }, [players, matches, config.winPoints, config.drawPoints]);
+    return recalculateLeaderboard(players, matches, config.winPoints, config.drawPoints, config.tournamentFormat || 'Americano');
+  }, [players, matches, config.winPoints, config.drawPoints, config.tournamentFormat]);
 
   // Handle Drag-and-Drop Excel uploads
   const handleExcelUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -210,7 +354,35 @@ export default function App() {
       return;
     }
 
-    const newMatches = generateSchedule(players, config, roundsCount);
+    // Build points map
+    const playerPointsMap: Record<string, number> = {};
+    players.forEach(p => {
+      playerPointsMap[p.id] = p.points || 0;
+    });
+
+    // Handle Team formats auto-partner assignment dynamically from current row order
+    let finalConfig = { ...config };
+    const isTeamFormat =
+      config.tournamentFormat === 'Team Americano' ||
+      config.tournamentFormat === 'Team Mexicano' ||
+      config.tournamentFormat === 'King of the Court';
+
+    if (isTeamFormat) {
+      const pm: Record<string, string> = {};
+      for (let i = 0; i < players.length - 1; i += 2) {
+        const p1 = players[i].id;
+        const p2 = players[i + 1].id;
+        pm[p1] = p2;
+        pm[p2] = p1;
+      }
+      finalConfig.partnerMap = pm;
+      setConfig(prev => ({ ...prev, partnerMap: pm }));
+    } else {
+      finalConfig.partnerMap = undefined;
+      setConfig(prev => ({ ...prev, partnerMap: undefined }));
+    }
+
+    const newMatches = generateSchedule(players, finalConfig, roundsCount, playerPointsMap);
     if (newMatches.length === 0) {
       showNotification('Algoritma gagal merumuskan kecocokan roster.', 'error');
       return;
@@ -257,11 +429,10 @@ export default function App() {
     showNotification(`${deletedName} berhasil dihapus.`);
   };
 
-  // Update score of a match
+  // Update score of a match based on scoring settings of current event
   const handleUpdateScore = (matchId: string, s1: number, s2: number) => {
-    if (s1 + s2 > 4 || s1 < 0 || s2 < 0) {
-      return; // BO4 constraint: cannot be more than 4 sets total
-    }
+    if (s1 < 0 || s2 < 0) return;
+
     setMatches((prev) =>
       prev.map((m) =>
         m.id === matchId ? { ...m, score1: s1, score2: s2 } : m
@@ -310,6 +481,149 @@ export default function App() {
     showNotification('Pertandingan dibuka kembali. Skor direset.', 'success');
   };
 
+  // Event Lobby CRUD triggers
+  const handleCreateEvent = (data: {
+    name: string;
+    format: TournamentFormat;
+    courtCount: number;
+    matchDuration: number;
+    roundsCount: number;
+    scoringType: ScoringType;
+    scoringValue: number;
+    selectedPlayerIds: string[];
+  }) => {
+    const eventPlayers: Player[] = players
+      .filter((p) => data.selectedPlayerIds.includes(p.id))
+      .map((p) => ({
+        ...p,
+        matchesPlayed: 0,
+        matchesWon: 0,
+        matchesLost: 0,
+        points: 0,
+        gamesWon: 0,
+        gamesLost: 0,
+        playingTime: 0,
+        winRate: 0,
+      }));
+
+    const eventId = `evt-${Date.now()}`;
+    const newConfig: TournamentConfig = {
+      courtCount: data.courtCount,
+      matchDuration: data.matchDuration,
+      format: 'Doubles',
+      winPoints: 2,
+      drawPoints: 1,
+      tournamentFormat: data.format,
+      scoringType: data.scoringType,
+      scoringValue: data.scoringValue
+    };
+
+    // Auto-partner mapping for Team formats
+    if (data.format === 'Team Americano' || data.format === 'Team Mexicano' || data.format === 'King of the Court') {
+      const pm: Record<string, string> = {};
+      for (let i = 0; i < eventPlayers.length - 1; i += 2) {
+        const p1 = eventPlayers[i].id;
+        const p2 = eventPlayers[i + 1].id;
+        pm[p1] = p2;
+        pm[p2] = p1;
+      }
+      newConfig.partnerMap = pm;
+    }
+
+    const newEvent: PadelEvent = {
+      id: eventId,
+      name: data.name,
+      createdAt: new Date().toISOString(),
+      format: data.format,
+      players: eventPlayers,
+      matches: [],
+      config: {
+        courtCount: data.courtCount,
+        matchDuration: data.matchDuration,
+        format: 'Doubles',
+        winPoints: 2,
+        drawPoints: 1,
+        tournamentFormat: data.format,
+        roundsCount: data.roundsCount,
+        scoringType: data.scoringType,
+        scoringValue: data.scoringValue,
+        partnerMap: newConfig.partnerMap
+      },
+      partnerMap: newConfig.partnerMap
+    };
+
+    loadedEventIdRef.current = eventId;
+    setEvents((prev) => [...prev, newEvent]);
+    setActiveEventId(eventId);
+    setPlayers(eventPlayers);
+    setMatches([]);
+    setRoundsCount(data.roundsCount);
+    setConfig(newConfig);
+    setActiveTab('players');
+
+    showNotification(`Event "${data.name}" berhasil dibuat! Silakan periksa & sesuaikan Roster Atlet di bawah.`);
+  };
+
+  const handleSelectEvent = (id: string) => {
+    loadedEventIdRef.current = id;
+    setActiveEventId(id);
+    setActiveTab('dashboard');
+    showNotification('Event berhasil dibuka.');
+  };
+
+  const handleCompleteEvent = (id: string) => {
+    setEvents(prev => prev.map(e => e.id === id ? { ...e, status: 'Completed' } : e));
+    showNotification('Event turnamen telah resmi diselesaikan dan dikunci! 🏆', 'success');
+    setActiveTab('leaderboard');
+  };
+
+  const handleAddQuickPlayer = (name: string) => {
+    handleAddPlayer({ name, gender: 'Laki-laki', skillLevel: 'Intermediate' });
+  };
+
+  const handleLoadSamplePlayers = () => {
+    setPlayers(SEED_PLAYERS);
+    setMatches([]);
+    showNotification('14 Roster atlet contoh berhasil dimuat ke dalam event!', 'success');
+  };
+
+  const handleDeleteEvent = (id: string) => {
+    triggerConfirm(
+      'Hapus Event dari Riwayat',
+      'Apakah Anda benar-benar yakin ingin menghapus event ini? Seluruh data tanding di dalamnya akan terhapus secara permanen.',
+      () => {
+        const nextEvents = events.filter(e => e.id !== id);
+        setEvents(nextEvents);
+        if (activeEventId === id) {
+          if (nextEvents.length > 0) {
+            setActiveEventId(nextEvents[0].id);
+          } else {
+            setActiveEventId(null);
+            setPlayers([]);
+            setMatches([]);
+          }
+        }
+        showNotification('Event dihapus.', 'success');
+      }
+    );
+  };
+
+  const handleDuplicateEvent = (id: string) => {
+    const target = events.find(e => e.id === id);
+    if (!target) return;
+    const dupId = `evt-dup-${Date.now()}`;
+    const dupEvent: PadelEvent = {
+      ...target,
+      id: dupId,
+      name: `${target.name} (Salinan)`,
+      createdAt: new Date().toISOString()
+    };
+    loadedEventIdRef.current = dupId;
+    setEvents(prev => [...prev, dupEvent]);
+    setActiveEventId(dupId);
+    showNotification(`Berhasil menyalin "${target.name}".`);
+  };
+
   // Exporters
   const handleExportSchedule = () => {
     if (matches.length === 0) {
@@ -326,11 +640,15 @@ export default function App() {
   };
 
   const handleClearAll = () => {
-    if (confirm('Apakah Anda yakin ingin menghapus seluruh data sirkuit atlet dan jadwal?')) {
-      setPlayers([]);
-      setMatches([]);
-      showNotification('Database dibersihkan.', 'success');
-    }
+    triggerConfirm(
+      'Hapus Seluruh Data',
+      'Apakah Anda benar-benar yakin ingin menghapus seluruh data sirkuit atlet dan jadwal pertandingan aktif?',
+      () => {
+        setPlayers([]);
+        setMatches([]);
+        showNotification('Database dibersihkan.', 'success');
+      }
+    );
   };
 
   return (
@@ -348,7 +666,7 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-base font-black tracking-tight text-white flex items-center gap-1.5 leading-none font-display">
-                COURT MASTER <span className="text-[9px] bg-teal-500/10 text-teal-400 py-1 px-1.5 rounded font-black border border-teal-550/20 tracking-wider">PRO</span>
+                COTTA MASTER <span className="text-[9px] bg-teal-500/10 text-teal-400 py-1 px-1.5 rounded font-black border border-teal-550/20 tracking-wider">PRO</span>
               </h1>
               <p className="text-[9px] text-[#94A3B8] font-bold tracking-widest uppercase mt-1.5 font-mono">Excel Sports Scheduler & Analyst</p>
             </div>
@@ -405,91 +723,39 @@ export default function App() {
           )}
         </AnimatePresence>
 
-        {/* 1. Scheduler Configurations Arena Panel */}
-        <section className="bg-[#121B2E]/40 border border-slate-800/80 rounded-3xl p-5 md:p-6 shadow-xl relative overflow-hidden backdrop-blur-md">
-          <div className="absolute top-0 right-0 w-36 h-36 bg-amber-500/5 rounded-full blur-[60px] pointer-events-none" />
-          
-          <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-center">
-            {/* Left Description Box */}
-            <div className="space-y-1.5 p-3 rounded-2xl border border-slate-850 bg-slate-950/20 xl:col-span-4 self-stretch flex flex-col justify-center">
-              <h2 className="text-xs font-black text-white uppercase tracking-widest flex items-center gap-1.5 font-display">
-                <Settings className="w-4 h-4 text-amber-500 shrink-0" />
-                Parameter Algoritma Penjadwalan
-              </h2>
-              <p className="text-[11px] text-[#A0AEC0] leading-relaxed">
-                Kustomisasi parameter tanding Anda. Algoritma cerdas kami otomatis merumuskan rotasi partner laga ganda agar adil, interaktif, dan seimbang sepanjang event!
-              </p>
-            </div>
+        {/* Intelligent Step-by-Step Assistant / Process HUD */}
+        <UserFlowWizard
+          activeTab={activeTab}
+          setActiveTab={setActiveTab}
+          players={players}
+          matches={matches}
+          config={config}
+          roundsCount={roundsCount}
+          events={events}
+          activeEventId={activeEventId}
+          onGenerateMatches={handleGenerateMatches}
+          onCompleteEvent={handleCompleteEvent}
+          onAddQuickPlayer={handleAddQuickPlayer}
+          onLoadSamplePlayers={handleLoadSamplePlayers}
+        />
 
-            {/* Middle Grid of Inputs */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 xl:col-span-6 w-full">
-              {/* Type Format */}
-              <div>
-                <label htmlFor="config-format" className="block text-[10px] font-extrabold text-[#94A3B8] uppercase tracking-widest mb-1.5 font-display">
-                  Format Laga
-                </label>
-                <select
-                  id="config-format"
-                  value={config.format}
-                  onChange={(e) => setConfig({ ...config, format: e.target.value as 'Singles' | 'Doubles' })}
-                  className="w-full bg-slate-950/90 border border-slate-850 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-teal-400 focus:ring-1 focus:ring-teal-400/20"
-                >
-                  <option value="Doubles">Doubles (2v2)</option>
-                  <option value="Singles">Singles (1v1)</option>
-                </select>
-              </div>
-
-              {/* Court Count */}
-              <div>
-                <label htmlFor="config-courtCount" className="block text-[10px] font-extrabold text-[#94A3B8] uppercase tracking-widest mb-1.5 font-display">
-                  Jumlah Court
-                </label>
-                <input
-                  id="config-courtCount"
-                  type="number"
-                  min={1}
-                  max={10}
-                  value={config.courtCount}
-                  onChange={(e) => setConfig({ ...config, courtCount: Math.max(1, parseInt(e.target.value) || 1) })}
-                  className="w-full bg-slate-950/90 border border-slate-850 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-teal-400 focus:ring-1 focus:ring-teal-400/20 font-mono"
-                />
-              </div>
-
-              {/* Rounds count */}
-              <div>
-                <label htmlFor="config-rounds" className="block text-[10px] font-extrabold text-[#94A3B8] uppercase tracking-widest mb-1.5 font-display">
-                  Putaran (Rounds)
-                </label>
-                <input
-                  id="config-rounds"
-                  type="number"
-                  min={1}
-                  max={15}
-                  value={roundsCount}
-                  onChange={(e) => setRoundsCount(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-full bg-slate-950/90 border border-slate-850 rounded-xl px-2.5 py-1.5 text-xs text-white focus:outline-none focus:border-teal-400 focus:ring-1 focus:ring-teal-400/20 font-mono"
-                />
-              </div>
-            </div>
-
-            {/* Generate Action */}
-            <div className="xl:col-span-2 w-full flex items-end xl:self-end">
-              <button
-                id="btn-re-generate"
-                onClick={handleGenerateMatches}
-                className="w-full bg-amber-400 hover:bg-amber-500 active:scale-95 text-[#0F172A] text-xs font-black py-3 px-5 rounded-xl shadow-lg shadow-amber-500/10 transition-all flex items-center justify-center gap-2 cursor-pointer font-display uppercase tracking-wider"
-              >
-                <Play className="w-4 h-4 fill-[#0F172A]" />
-                Generate Jadwal
-              </button>
-            </div>
-          </div>
-        </section>
-
-        {/* 2. Primary Tabs bar */}
+        {/* Primary Tabs bar */}
         <section className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 border-b border-slate-900 pb-4">
           {/* Tabs Navigation */}
           <div className="flex flex-nowrap lg:flex-wrap items-center gap-1 bg-[#090D16] border border-slate-900 p-1.5 rounded-2xl w-full lg:w-auto overflow-x-auto scrollbar-none shrink-0 pb-2 lg:pb-1.5">
+            <button
+              id="tab-btn-events"
+              onClick={() => setActiveTab('events')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 font-display shrink-0 ${
+                activeTab === 'events'
+                  ? 'bg-[#121B2E] text-teal-400 border border-teal-500/20 shadow-lg shadow-teal-500/5'
+                  : 'text-slate-450 hover:text-white'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5 text-teal-400 font-bold animate-pulse" />
+              Event & Turnamen
+            </button>
+
             <button
               id="tab-btn-dashboard"
               onClick={() => setActiveTab('dashboard')}
@@ -513,7 +779,7 @@ export default function App() {
               }`}
             >
               <Users className="w-3.5 h-3.5 text-teal-400" />
-              Kelola Players ({players.length})
+              Roster Atlet ({players.length})
             </button>
 
             <button
@@ -596,62 +862,156 @@ export default function App() {
 
         {/* 3. Render Dashboard Tabs Content */}
         <div id="active-tab-panel">
-          {activeTab === 'dashboard' && (
-            <div className="space-y-6">
-              {/* Overarching general cards metrics */}
-              <DashboardStats
-                players={players}
-                matches={matches}
-                courtCount={config.courtCount}
-              />
+          {!activeEventId && activeTab !== 'events' ? (
+            <div className="text-center py-16 px-6 bg-[#0B1220]/60 border border-slate-900 rounded-3xl space-y-5 max-w-lg mx-auto shadow-2xl backdrop-blur-md">
+              <div className="mx-auto w-12 h-12 bg-teal-500/10 border border-teal-500/20 text-teal-400 rounded-2xl flex items-center justify-center animate-bounce">
+                <Compass className="w-6 h-6" />
+              </div>
+              <div className="space-y-1.5 opacity-90">
+                <h3 className="text-sm font-black text-white uppercase tracking-wider font-display">Tidak Ada Event Aktif</h3>
+                <p className="text-xs text-slate-450 leading-relaxed">
+                  Semua tab sirkuit (Roster Atlet, Jadwal Arena, Klasemen Live) beroperasi secara dinamis berdasarkan data event yang sedang Anda buka. Silakan berpindah ke tab <b>Event &amp; Turnamen</b> untuk membuat event baru atau memuat kembali event dari riwayat sirkuit!
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('events')}
+                className="px-4 py-2 bg-teal-400 hover:bg-teal-500 active:scale-95 text-[#0F172A] text-xs font-black rounded-xl uppercase tracking-wider font-display transition-all cursor-pointer shadow-md inline-flex items-center gap-1"
+              >
+                Ke Tab Event &amp; Turnamen ➔
+              </button>
+            </div>
+          ) : (
+            <>
+              {activeTab === 'events' && (
+                <EventManager
+                  events={events}
+                  activeEventId={activeEventId}
+                  onSelectEvent={handleSelectEvent}
+                  onDeleteEvent={handleDeleteEvent}
+                  onDuplicateEvent={handleDuplicateEvent}
+                  onCreateEvent={handleCreateEvent}
+                  allSystemPlayers={players}
+                  onGenerateMatches={handleGenerateMatches}
+                  config={config}
+                  roundsCount={roundsCount}
+                  onChangeConfig={setConfig}
+                  onChangeRoundsCount={setRoundsCount}
+                  matches={matches}
+                />
+              )}
 
-              {/* Informational Alerts */}
-              {matches.length === 0 && (
-                <div id="empty-state-notice" className="p-4 rounded-2xl bg-amber-950/15 border border-amber-500/20 text-yellow-250 flex items-start gap-3">
-                  <Info className="w-4 h-4 shrink-0 mt-0.5" />
-                  <div className="text-xs space-y-1">
-                    <p className="font-bold">Roster Kosong / Belum Dijadwal</p>
-                    <p>
-                      Silakan ke tab <b>Kelola Players</b> untuk memasukkan atlet buatan atau klik <b>Upload Atlet Excel</b> di pojok kanan atas untuk memasukkan dari berkas offline. Jika sudah, jalankan <b>Generate Jadwal</b> di panel atas!
-                    </p>
-                  </div>
+              {activeTab === 'dashboard' && (
+                <div className="space-y-6">
+                  {/* Overarching general cards metrics */}
+                  <DashboardStats
+                    players={players}
+                    matches={matches}
+                    courtCount={config.courtCount}
+                  />
+
+                  {/* Informational Alerts */}
+                  {matches.length === 0 && (
+                    <div id="empty-state-notice" className="p-4 rounded-2xl bg-amber-950/15 border border-amber-500/20 text-yellow-250 flex items-start gap-3">
+                      <Info className="w-4 h-4 shrink-0 mt-0.5" />
+                      <div className="text-xs space-y-1">
+                        <p className="font-bold">Event Aktif Belum Di-Generate</p>
+                        <p>
+                          Silakan berpindah ke tab <b>Event & Turnamen</b> untuk menentukan parameter tanding dan mengeklik tombol <b>Generate Jadwal Laga</b> agar rotasi tanding dirumuskan otomatis!
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Analytics graphics visualizations */}
+                  <AnalyticsCharts players={currentLeaderboard} matches={matches} />
                 </div>
               )}
 
-              {/* Analytics graphics visualizations */}
-              <AnalyticsCharts players={currentLeaderboard} matches={matches} />
-            </div>
-          )}
+              {activeTab === 'players' && (
+                <PlayerManager
+                  players={players}
+                  onAddPlayer={handleAddPlayer}
+                  onRemovePlayer={handleRemovePlayer}
+                  onReorderPlayers={handleReorderPlayers}
+                  onExcelUpload={handleExcelUpload}
+                />
+              )}
 
-          {activeTab === 'players' && (
-            <PlayerManager
-              players={players}
-              onAddPlayer={handleAddPlayer}
-              onRemovePlayer={handleRemovePlayer}
-              onReorderPlayers={handleReorderPlayers}
-              onExcelUpload={handleExcelUpload}
-            />
-          )}
+              {activeTab === 'matches' && (
+                <MatchList
+                  matches={matches}
+                  players={players}
+                  onUpdateScore={handleUpdateScore}
+                  onSetStatus={handleSetStatus}
+                  onResetMatch={handleResetMatch}
+                  scoringType={config.scoringType}
+                  scoringValue={config.scoringValue}
+                />
+              )}
 
-          {activeTab === 'matches' && (
-            <MatchList
-              matches={matches}
-              players={players}
-              onUpdateScore={handleUpdateScore}
-              onSetStatus={handleSetStatus}
-              onResetMatch={handleResetMatch}
-            />
-          )}
+              {activeTab === 'leaderboard' && (
+                <LeaderboardPodium leaderboard={currentLeaderboard} />
+              )}
 
-          {activeTab === 'leaderboard' && (
-            <LeaderboardPodium leaderboard={currentLeaderboard} />
-          )}
-
-          {activeTab === 'patungan' && (
-            <CourtFeeCalculator players={players} />
+              {activeTab === 'patungan' && (
+                <CourtFeeCalculator players={players} />
+              )}
+            </>
           )}
         </div>
       </main>
+
+      {/* Custom Confirmation Modal */}
+      <AnimatePresence>
+        {confirmModal.isOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            {/* Backdrop overlay */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            />
+            {/* Modal Body */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-[#0B1220]/95 border border-slate-800 rounded-3xl p-6 max-w-md w-full relative z-10 shadow-2xl space-y-4 text-center ring-1 ring-white/5"
+            >
+              <div className="mx-auto w-12 h-12 rounded-2xl bg-amber-500/10 border border-amber-500/25 flex items-center justify-center mb-2">
+                <Info className="w-6 h-6 text-amber-500 animate-pulse" />
+              </div>
+              <div className="space-y-1.5">
+                <h3 className="text-sm font-black text-white uppercase tracking-wider font-display">
+                  {confirmModal.title}
+                </h3>
+                <p className="text-xs text-slate-400 leading-relaxed">
+                  {confirmModal.message}
+                </p>
+              </div>
+              <div className="flex items-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setConfirmModal((prev) => ({ ...prev, isOpen: false }))}
+                  className="flex-1 py-2.5 bg-slate-900 hover:bg-slate-850 text-slate-350 hover:text-white text-xs font-black rounded-xl transition-all cursor-pointer uppercase tracking-wider border border-slate-850"
+                >
+                  Batal
+                </button>
+                <button
+                  type="button"
+                  onClick={confirmModal.onConfirm}
+                  className="flex-1 py-2.5 bg-rose-500 hover:bg-rose-600 active:scale-95 text-white text-xs font-black rounded-xl transition-all shadow-lg shadow-rose-500/15 cursor-pointer uppercase tracking-wider"
+                >
+                  Ya, Setuju
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

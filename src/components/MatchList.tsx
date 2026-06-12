@@ -9,6 +9,8 @@ interface MatchListProps {
   onUpdateScore: (matchId: string, score1: number, score2: number) => void;
   onSetStatus: (matchId: string, status: 'Scheduled' | 'In Progress' | 'Completed') => void;
   onResetMatch: (matchId: string) => void;
+  scoringType?: 'BestOf' | 'RaceTo';
+  scoringValue?: number;
 }
 
 export default function MatchList({
@@ -17,6 +19,8 @@ export default function MatchList({
   onUpdateScore,
   onSetStatus,
   onResetMatch,
+  scoringType = 'BestOf',
+  scoringValue = 4
 }: MatchListProps) {
   const [selectedRound, setSelectedRound] = React.useState<number | 'All'>('All');
   const [courtFilter, setCourtFilter] = React.useState<string>('All');
@@ -255,7 +259,19 @@ export default function MatchList({
                   {m.status !== 'Completed' ? (
                     (() => {
                       const totalSets = (m.score1 ?? 0) + (m.score2 ?? 0);
-                      const plusDisabled = totalSets >= 4;
+                      const isBestOf = scoringType === 'BestOf';
+                      
+                      const t1PlusDisabled = false;
+                      const t2PlusDisabled = false;
+
+                      const sumLabel = isBestOf 
+                        ? `${totalSets}/${scoringValue} Set` 
+                        : `${m.score1 ?? 0} - ${m.score2 ?? 0} Games`;
+
+                      const infoTitle = isBestOf 
+                        ? `Best of ${scoringValue} (Maksimal total ${scoringValue} set)` 
+                        : `Race to ${scoringValue}`;
+
                       return (
                         <>
                           {/* Plus/minus buttons */}
@@ -274,14 +290,14 @@ export default function MatchList({
                               </span>
                               <button
                                 id={`btn-t1score-inc-${m.id}`}
-                                disabled={plusDisabled}
+                                disabled={t1PlusDisabled}
                                 onClick={() => onUpdateScore(m.id, (m.score1 ?? 0) + 1, m.score2 ?? 0)}
                                 className={`p-1 rounded-md transition-all ${
-                                  plusDisabled
+                                  t1PlusDisabled
                                     ? 'text-slate-700 cursor-not-allowed opacity-45'
                                     : 'text-slate-500 hover:text-white hover:bg-[#121B2E] active:scale-90 cursor-pointer'
                                 }`}
-                                title={plusDisabled ? "Maksimal 4 set (BO4)" : "Tambah skor Team 1"}
+                                title={t1PlusDisabled ? infoTitle : "Tambah skor Team 1"}
                               >
                                 <Plus className="w-3 h-3" />
                               </button>
@@ -303,14 +319,14 @@ export default function MatchList({
                               </span>
                               <button
                                 id={`btn-t2score-inc-${m.id}`}
-                                disabled={plusDisabled}
+                                disabled={t2PlusDisabled}
                                 onClick={() => onUpdateScore(m.id, m.score1 ?? 0, (m.score2 ?? 0) + 1)}
                                 className={`p-1 rounded-md transition-all ${
-                                  plusDisabled
+                                  t2PlusDisabled
                                     ? 'text-slate-700 cursor-not-allowed opacity-45'
                                     : 'text-slate-500 hover:text-white hover:bg-[#121B2E] active:scale-90 cursor-pointer'
                                 }`}
-                                title={plusDisabled ? "Maksimal 4 set (BO4)" : "Tambah skor Team 2"}
+                                title={t2PlusDisabled ? infoTitle : "Tambah skor Team 2"}
                               >
                                 <Plus className="w-3 h-3" />
                               </button>
@@ -318,7 +334,7 @@ export default function MatchList({
 
                             {/* Set Count Indicator status */}
                             <span className="text-[10px] font-mono text-slate-400 font-medium">
-                              ({totalSets}/4 Set)
+                              ({sumLabel} • {scoringType === 'BestOf' ? 'Best of' : 'Race to'} {scoringValue})
                             </span>
                           </div>
 

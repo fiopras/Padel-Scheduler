@@ -1,5 +1,5 @@
 {
-  "name": "Excel Sports Match Scheduler & Leaderboard",
+  "name": "Cotta Master",
   "description": "Premium athletic match scheduling and advanced analytics dashboard. Upload players list from Excel and generate optimized court schedules, scores, and export multi-sheet leaderboards.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
