@@ -28,6 +28,8 @@ export interface Match {
   status: 'Scheduled' | 'In Progress' | 'Completed';
   duration: number; // in minutes
   timestamp?: string; // string representation of scheduled slot
+  startTime?: number; // epoc timestamp in millisecond when the game started
+  durationSeconds?: number; // exact match duration in seconds upon completion
 }
 
 export type TournamentFormat =

@@ -57,9 +57,9 @@ export default function EventManager({
   // New event form state
   const [name, setName] = React.useState('');
   const [format, setFormat] = React.useState<TournamentFormat>('Americano');
-  const [courtCount, setCourtCount] = React.useState(2);
+  const [courtCount, setCourtCount] = React.useState<number | ''>(2);
   const [matchDuration, setMatchDuration] = React.useState(20);
-  const [formRoundsCount, setFormRoundsCount] = React.useState(3);
+  const [formRoundsCount, setFormRoundsCount] = React.useState<number | ''>(3);
   const [scoringType, setScoringType] = React.useState<ScoringType>('BestOf');
   const [scoringPreset, setScoringPreset] = React.useState('4'); // 'Custom' or value
   const [customScoringValue, setCustomScoringValue] = React.useState(4);
@@ -96,12 +96,15 @@ export default function EventManager({
       return;
     }
 
+    const finalCourts = typeof courtCount === 'number' ? courtCount : 2;
+    const finalRounds = typeof formRoundsCount === 'number' ? formRoundsCount : 3;
+
     onCreateEvent({
       name,
       format,
-      courtCount,
+      courtCount: finalCourts,
       matchDuration: 20,
-      roundsCount: formRoundsCount,
+      roundsCount: finalRounds,
       scoringType: 'BestOf',
       scoringValue: 4,
       selectedPlayerIds: selectedPlayerIds
@@ -342,7 +345,15 @@ export default function EventManager({
                   min={1}
                   max={10}
                   value={courtCount}
-                  onChange={(e) => setCourtCount(Math.max(1, parseInt(e.target.value) || 1))}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '') {
+                      setCourtCount('');
+                    } else {
+                      const parsed = parseInt(val, 10);
+                      setCourtCount(isNaN(parsed) ? '' : parsed);
+                    }
+                  }}
                   className="w-full bg-slate-950/90 border border-slate-850 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none focus:border-teal-400 focus:ring-1 focus:ring-teal-400/20 font-mono"
                 />
               </div>
@@ -360,7 +371,15 @@ export default function EventManager({
                   min={1}
                   max={20}
                   value={formRoundsCount}
-                  onChange={(e) => setFormRoundsCount(Math.max(1, parseInt(e.target.value) || 3))}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    if (val === '') {
+                      setFormRoundsCount('');
+                    } else {
+                      const parsed = parseInt(val, 10);
+                      setFormRoundsCount(isNaN(parsed) ? '' : parsed);
+                    }
+                  }}
                   className="w-full bg-slate-950/90 border border-slate-850 rounded-xl px-2.5 py-2 text-xs text-white focus:outline-none focus:border-teal-400 focus:ring-1 focus:ring-teal-400/20 font-mono"
                 />
               </div>

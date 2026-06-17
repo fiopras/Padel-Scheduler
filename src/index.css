@@ -7,3 +7,382 @@
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
 }
 
+/* PREMIUM LIGHT THEME PRESETS INPIRED BY WORLD-CLASS PADEL CLUB LAYOUTS */
+.light-preset-clay {
+  /* 🏆 Royal Clay Court & Terracotta */
+  --background: #faf8f5;
+  --foreground: #1e1b18;
+  --card-bg: #ffffff;
+  --card-border: #f1ebd9;
+  --text-primary: #1e1b18;
+  --text-secondary: #5c544d;
+  --text-muted: #8c7e73;
+  --accent-color: #ea580c; /* Deep terracotta clay orange */
+  --accent-color-hover: #c2410c;
+  --accent-bg: #fff8f5;
+  --accent-border: #ffdcd0;
+  --accent-glow: rgba(234, 88, 12, 0.04);
+  --header-bg: #ffffff;
+  --wizard-bg: #ffffff;
+  --panel-dense-bg: #f5eee0;
+  --button-inactive-bg: #fbf9f5;
+  --live-border: #ffdcd0;
+  --live-bg: #fffbf9;
+  --complete-border: #bfdbfe;
+  --complete-bg: #eff6ff;
+}
+
+.light-preset-emerald {
+  /* 🎾 Padel Country Club Grass Velvet (The Perfect Mockup Matches) */
+  --background: #f4f6f8;
+  --foreground: #0f172a;
+  --card-bg: #ffffff;
+  --card-border: #e2e8f0;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --accent-color: #0f766e; /* Elegant deep teal / emerald from user mockup */
+  --accent-color-hover: #0d9488;
+  --accent-bg: #f0fdfa;
+  --accent-border: #ccfbf1;
+  --accent-glow: rgba(15, 118, 110, 0.04);
+  --header-bg: #ffffff;
+  --wizard-bg: #ffffff;
+  --panel-dense-bg: #f1f5f9;
+  --button-inactive-bg: #f8fafc;
+  --live-border: #ccfbf1;
+  --live-bg: #f0fdfa;
+  --complete-border: #ccfbf1;
+  --complete-bg: #fafafa;
+}
+
+.light-preset-cyan {
+  /* ❄️ Nordic Frost Club & Sleek Slate */
+  --background: #f1f5f9;
+  --foreground: #0f172a;
+  --card-bg: #ffffff;
+  --card-border: #cbd5e1;
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --accent-color: #0284c7; /* Royal electric cyan blue */
+  --accent-color-hover: #0369a1;
+  --accent-bg: #f0f9ff;
+  --accent-border: #bae6fd;
+  --accent-glow: rgba(2, 132, 199, 0.04);
+  --header-bg: #ffffff;
+  --wizard-bg: #ffffff;
+  --panel-dense-bg: #e2e8f0;
+  --button-inactive-bg: #f8fafc;
+  --live-border: #bae6fd;
+  --live-bg: #f0f9ff;
+  --complete-border: #bae6fd;
+  --complete-bg: #fafafa;
+}
+
+.light-preset-amber {
+  /* ☀️ Golden Sunset Beach Padel */
+  --background: #fcfbfa;
+  --foreground: #2d1f05;
+  --card-bg: #ffffff;
+  --card-border: #e2dfd9;
+  --text-primary: #2d1f05;
+  --text-secondary: #574c3d;
+  --text-muted: #82786b;
+  --accent-color: #d97706; /* Golden warm amber */
+  --accent-color-hover: #b45309;
+  --accent-bg: #fffdf5;
+  --accent-border: #fef2c7;
+  --accent-glow: rgba(217, 119, 6, 0.04);
+  --header-bg: #ffffff;
+  --wizard-bg: #ffffff;
+  --panel-dense-bg: #f5ebe0;
+  --button-inactive-bg: #fcfbf9;
+  --live-border: #fef2c7;
+  --live-bg: #fffdf5;
+  --complete-border: #e2dfd9;
+  --complete-bg: #fafafa;
+}
+
+/* GENERAL LIGHT THEME TARGET COMPONENT SYSTEM RULES */
+.light-theme {
+  --background-color: var(--background);
+  --color: var(--foreground);
+  background-color: var(--background) !important;
+  color: var(--foreground) !important;
+}
+
+/* Scrollbar styling override in Light Mode */
+.light-theme ::-webkit-scrollbar-track {
+  background-color: var(--background) !important;
+}
+
+.light-theme ::-webkit-scrollbar-thumb {
+  background-color: var(--card-border) !important;
+  border-radius: 9999px;
+}
+
+/* Overriding ALL dark panels with cohesive matching light borders and backgrounds (no high-contrast ugly borders) */
+.light-theme [class*="bg-[#121B2E]"],
+.light-theme [class*="bg-[#0B1220]"],
+.light-theme [class*="bg-[#0c1221]"],
+.light-theme [class*="bg-[#090D16]"],
+.light-theme [class*="bg-[#0f172a]"],
+.light-theme [class*="bg-[#18233C]"],
+.light-theme [class*="bg-[#1C1613]"],
+.light-theme [class*="bg-[#1C1D3B]"],
+.light-theme [class*="bg-[#121C34]"],
+.light-theme [class*="bg-[#2D211F]"],
+.light-theme [class*="bg-slate-900"],
+.light-theme [class*="bg-slate-950"],
+.light-theme [class*="bg-[#15223c]"] {
+  background-color: var(--card-bg) !important;
+  border-color: var(--card-border) !important;
+  color: var(--text-primary) !important;
+  box-shadow: 0 4px 20px rgba(15, 23, 42, 0.02) !important;
+}
+
+/* Special helper box override - clean, warm pastel background */
+.light-theme [class*="bg-[#0e1626]"] {
+  background-color: var(--accent-bg) !important;
+  border-color: var(--accent-border) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Specific background override for Wizard container & outer main flow guides (gorgeous clean white background) */
+.light-theme [class*="bg-[#0B1220]/75"],
+.light-theme [class*="bg-[#0B1220]/70"],
+.light-theme [class*="bg-[#0B1220]/60"],
+.light-theme [class*="bg-[#0B1220]/95"] {
+  background-color: var(--wizard-bg) !important;
+  border-color: var(--card-border) !important;
+  box-shadow: 0 10px 40px rgba(112, 128, 144, 0.04) !important;
+}
+
+/* Dense panel inner list backings (e.g. list segments inside the wizard) */
+.light-theme [class*="bg-slate-950/30"],
+.light-theme [class*="bg-[#0c1221]"],
+.light-theme [class*="bg-[#090D16]"],
+.light-theme [class*="bg-[#0F172A]"] {
+  background-color: var(--button-inactive-bg) !important;
+  border-color: var(--card-border) !important;
+}
+
+/* Draggable Atlets lists and roster items */
+.light-theme [class*="bg-[#0c1221]/50"] {
+  background-color: var(--card-bg) !important;
+  border-color: var(--card-border) !important;
+}
+
+.light-theme [class*="bg-[#0c1221]/50"]:hover {
+  background-color: var(--accent-bg) !important;
+  border-color: var(--accent-color) !important;
+}
+
+/* Stat-items and bento cards hover/opacity states */
+.light-theme [class*="bg-[#121B2E]/"],
+.light-theme [class*="bg-[#0B1220]/"],
+.light-theme [class*="bg-[#0c1221]/"],
+.light-theme [class*="bg-slate-900/"] {
+  background-color: var(--card-bg) !important;
+  border-color: var(--card-border) !important;
+  color: var(--text-primary) !important;
+}
+
+/* Complete matches and statistics blocks */
+.light-theme [class*="border-teal-400"] {
+  background-color: var(--live-bg) !important;
+  border-color: var(--accent-color) !important;
+  color: var(--text-primary) !important;
+}
+
+.light-theme [class*="text-teal-400"],
+.light-theme [class*="text-teal-300"] {
+  color: var(--accent-color) !important;
+  font-weight: 700 !important;
+}
+
+/* Completed game status lists (soft elegant styling matching modern mockup) */
+.light-theme [class*="border-indigo-500"] {
+  background-color: var(--complete-bg) !important;
+  border-color: var(--card-border) !important;
+  color: var(--text-primary) !important;
+}
+
+.light-theme [class*="text-indigo-400"] {
+  color: var(--accent-color) !important;
+  font-weight: 700 !important;
+}
+
+/* Global text overrides for premium light mode legibility */
+.light-theme h1,
+.light-theme h2,
+.light-theme h3,
+.light-theme h4,
+.light-theme h5,
+.light-theme h6,
+.light-theme .font-display,
+.light-theme .text-slate-100,
+.light-theme .text-slate-200,
+.light-theme .text-white {
+  color: var(--text-primary) !important;
+}
+
+/* Secondary descriptions and titles */
+.light-theme p,
+.light-theme label,
+.light-theme span:not(.text-rose-500):not(.text-red-500):not(.text-emerald-500):not(.text-green-500),
+.light-theme div:not([class*="bg-gradient"]) {
+  color: var(--text-secondary);
+}
+
+/* Standard custom gray color class translation to beautiful matching grey inks */
+.light-theme .text-slate-300,
+.light-theme .text-slate-400,
+.light-theme .text-slate-450,
+.light-theme .text-slate-500,
+.light-theme .text-slate-600,
+.light-theme .text-[#A0AEC0],
+.light-theme [class*="text-slate-4"],
+.light-theme [class*="text-slate-5"] {
+  color: var(--text-muted) !important;
+}
+
+/* Dropdown selections and Input elements styling */
+.light-theme input,
+.light-theme select,
+.light-theme textarea {
+  background-color: var(--card-bg) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--card-border) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.01) !important;
+}
+
+.light-theme input:focus,
+.light-theme select:focus,
+.light-theme textarea:focus {
+  border-color: var(--accent-color) !important;
+  outline: none !important;
+  box-shadow: 0 0 0 2px var(--accent-glow) !important;
+}
+
+.light-theme input::placeholder {
+  color: var(--text-muted) !important;
+  opacity: 0.6;
+}
+
+/* Draggable widgets & alerts styles mapping */
+.light-theme [class*="bg-slate-900/20"],
+.light-theme [class*="bg-emerald-950/15"],
+.light-theme [class*="bg-teal-500/5"] {
+  background-color: var(--accent-bg) !important;
+  border-color: var(--accent-border) !important;
+}
+
+.light-theme .text-\[\#B7E4C7\] {
+  color: var(--accent-color) !important;
+}
+
+/* Overriding borders throughout the UI to remain incredibly thin and clean */
+.light-theme .border-slate-800,
+.light-theme .border-slate-850,
+.light-theme .border-slate-900,
+.light-theme .divide-slate-800 > * {
+  border-color: var(--card-border) !important;
+}
+
+/* Map specific interactive colors dynamically to our presets */
+.light-theme [class*="bg-[#121B2E]"] {
+  background-color: var(--card-bg) !important;
+  color: var(--accent-color) !important;
+  border-color: var(--accent-color) !important;
+  box-shadow: 0 2px 8px var(--accent-glow) !important;
+}
+
+/* Outer layout navigation wrapper styling override */
+.light-theme .pb-2\.5 {
+  background-color: var(--panel-dense-bg) !important;
+  border-color: var(--card-border) !important;
+}
+
+/* Active navigation buttons like Dashboard tab: White card with thin teal highlight and teal text */
+.light-theme button[id*="tab-btn-"][class*="bg-[#121B2E]"] {
+  background-color: var(--card-bg) !important;
+  border-color: var(--accent-color) !important;
+  color: var(--accent-color) !important;
+  box-shadow: 0 4px 12px rgba(15, 118, 110, 0.08) !important;
+}
+
+/* Special rules for dynamic wizard progress step badges */
+.light-theme button[class*="bg-teal-500/10"] {
+  background-color: var(--accent-color) !important; /* Make active step solid like mockup! */
+  border-color: var(--accent-color) !important;
+}
+
+.light-theme button[class*="bg-teal-500/10"] * {
+  color: #ffffff !important; /* All text inside active step becomes white! */
+}
+
+.light-theme button[class*="bg-teal-500/10"] div {
+  border-color: rgba(255, 255, 255, 0.4) !important;
+  background-color: rgba(255, 255, 255, 0.1) !important;
+  color: #ffffff !important;
+}
+
+.light-theme button[class*="bg-slate-900/40"] {
+  background-color: var(--card-bg) !important;
+  border-color: var(--card-border) !important;
+  opacity: 1 !important;
+}
+
+.light-theme button[class*="bg-slate-950/20"] {
+  background-color: var(--button-inactive-bg) !important;
+  border-color: var(--card-border) !important;
+  opacity: 0.7 !important;
+}
+
+/* Round layout pill lists selection gradient colors */
+.light-theme .bg-gradient-to-r {
+  background: var(--accent-color) !important;
+  color: #ffffff !important;
+}
+
+.light-theme .bg-gradient-to-r span,
+.light-theme .bg-gradient-to-r div,
+.light-theme .bg-gradient-to-r p {
+  color: #ffffff !important;
+}
+
+/* Hover transitions override logic - keeps colors beautiful */
+.light-theme .hover\:text-white:hover {
+  color: var(--accent-color) !important;
+}
+
+.light-theme .hover\:bg-\[\#121B2E\]:hover,
+.light-theme .hover\:bg-slate-800:hover,
+.light-theme .hover\:bg-[#121B2E]:hover,
+.light-theme .hover\:bg-[#0c1221]:hover,
+.light-theme .hover\:bg-slate-950:hover {
+  background-color: var(--accent-bg) !important;
+  color: var(--accent-color) !important;
+}
+
+/* Button solid colors mapping for premium usability */
+.light-theme button.bg-teal-500,
+.light-theme button[class*="bg-teal-"] {
+  background-color: var(--accent-color) !important;
+  color: #ffffff !important;
+  border-color: var(--accent-color) !important;
+}
+
+.light-theme button.bg-teal-500:hover,
+.light-theme button[class*="bg-teal-"]:hover {
+  background-color: var(--accent-color-hover) !important;
+}
+
+/* Header line styles in light presets */
+.light-theme header {
+  background-color: var(--header-bg) !important;
+  border-color: var(--card-border) !important;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.01) !important;
+}

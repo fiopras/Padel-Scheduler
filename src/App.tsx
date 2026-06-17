@@ -16,7 +16,9 @@ import {
   Zap,
   Info,
   Coins,
-  Compass
+  Compass,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { Player, Match, TournamentConfig, GenderType, SkillLevelType, TournamentFormat, ScoringType, PadelEvent } from './types';
 import { generateSchedule, recalculateLeaderboard } from './utils/scheduler';
@@ -133,6 +135,20 @@ const SEED_MATCHES: Match[] = [
 
 export default function App() {
   const [activeTab, setActiveTab] = React.useState<'dashboard' | 'events' | 'players' | 'matches' | 'leaderboard' | 'patungan'>('dashboard');
+  const [theme, setTheme] = React.useState<'dark' | 'light'>(() => {
+    return (localStorage.getItem('cotta_theme') as 'dark' | 'light') || 'dark';
+  });
+  const [lightThemePreset, setLightThemePreset] = React.useState<'clay' | 'emerald' | 'cyan' | 'amber'>(() => {
+    return (localStorage.getItem('cotta_light_preset') as 'clay' | 'emerald' | 'cyan' | 'amber') || 'emerald';
+  });
+
+  React.useEffect(() => {
+    localStorage.setItem('cotta_theme', theme);
+  }, [theme]);
+
+  React.useEffect(() => {
+    localStorage.setItem('cotta_light_preset', lightThemePreset);
+  }, [lightThemePreset]);
 
   // Application database state
   const [players, setPlayers] = React.useState<Player[]>(SEED_PLAYERS);
@@ -479,11 +495,23 @@ export default function App() {
         const nextScore1 = status === 'Completed' && m.score1 === undefined ? 0 : m.score1;
         const nextScore2 = status === 'Completed' && m.score2 === undefined ? 0 : m.score2;
 
+        const updatedStartTime = status === 'In Progress' ? (m.startTime || Date.now()) : m.startTime;
+
+        let finalDurationSeconds = m.durationSeconds;
+        let finalDuration = m.duration;
+        if (status === 'Completed' && updatedStartTime) {
+          finalDurationSeconds = Math.max(1, Math.floor((Date.now() - updatedStartTime) / 1000));
+          finalDuration = Math.ceil(finalDurationSeconds / 60);
+        }
+
         return {
           ...m,
           status,
           score1: nextScore1,
           score2: nextScore2,
+          startTime: updatedStartTime,
+          durationSeconds: finalDurationSeconds,
+          duration: finalDuration,
         };
       })
     );
@@ -503,6 +531,8 @@ export default function App() {
               status: 'Scheduled',
               score1: undefined,
               score2: undefined,
+              startTime: undefined,
+              durationSeconds: undefined,
             }
           : m
       )
@@ -681,7 +711,11 @@ export default function App() {
   };
 
   return (
-    <div id="main-sports-wrapper" className="min-h-screen bg-slate-950 font-sans text-slate-100 selection:bg-teal-500 selection:text-slate-950 relative overflow-hidden pb-12">
+    <div id="main-sports-wrapper" className={`min-h-screen font-sans relative overflow-hidden pb-12 transition-colors duration-300 ${
+      theme === 'light' 
+        ? `light-theme light-preset-${lightThemePreset} bg-slate-50 text-slate-900 selection:bg-teal-500 selection:text-slate-950` 
+        : 'dark-theme bg-slate-950 text-slate-100 selection:bg-teal-500 selection:text-slate-950'
+    }`}>
       {/* Visual Ambient Elixir Glows */}
       <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-teal-500/5 rounded-full blur-[140px] pointer-events-none" />
       <div className="absolute top-1/3 left-10 w-96 h-96 bg-amber-500/5 rounded-full blur-[120px] pointer-events-none" />
@@ -701,11 +735,79 @@ export default function App() {
             </div>
           </div>
 
-          {/* Quick Excel Action */}
-          <div className="flex items-center gap-2">
+          {/* Quick Excel Action + Theme Toggler */}
+          <div className="flex items-center gap-2.5 self-stretch sm:self-auto justify-end">
+            {theme === 'light' && (
+              <div className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-slate-200 rounded-xl shadow-sm">
+                <span className="text-[10px] text-slate-500 font-extrabold hidden xs:inline uppercase tracking-wider font-display">TEMA:</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => setLightThemePreset('clay')}
+                    className={`w-4 h-4 rounded-full transition-all relative ${
+                      lightThemePreset === 'clay' 
+                        ? 'ring-2 ring-orange-500 scale-110 border-orange-600' 
+                        : 'border border-slate-300 hover:scale-105'
+                    }`}
+                    style={{ backgroundColor: '#ea580c' }}
+                    title="Royal Clay Court (Terracotta)"
+                  >
+                    {lightThemePreset === 'clay' && <span className="absolute inset-0 m-auto w-1 h-1 bg-white rounded-full" />}
+                  </button>
+                  <button
+                    onClick={() => setLightThemePreset('emerald')}
+                    className={`w-4 h-4 rounded-full transition-all relative ${
+                      lightThemePreset === 'emerald' 
+                        ? 'ring-2 ring-green-500 scale-110 border-green-600' 
+                        : 'border border-slate-300 hover:scale-105'
+                    }`}
+                    style={{ backgroundColor: '#10b981' }}
+                    title="Padel Grass Turf (Emerald)"
+                  >
+                    {lightThemePreset === 'emerald' && <span className="absolute inset-0 m-auto w-1 h-1 bg-white rounded-full" />}
+                  </button>
+                  <button
+                    onClick={() => setLightThemePreset('cyan')}
+                    className={`w-4 h-4 rounded-full transition-all relative ${
+                      lightThemePreset === 'cyan' 
+                        ? 'ring-2 ring-cyan-500 scale-110 border-cyan-600' 
+                        : 'border border-slate-300 hover:scale-105'
+                    }`}
+                    style={{ backgroundColor: '#06b6d4' }}
+                    title="Ocean Breeze Clean (Cyan)"
+                  >
+                    {lightThemePreset === 'cyan' && <span className="absolute inset-0 m-auto w-1 h-1 bg-white rounded-full" />}
+                  </button>
+                  <button
+                    onClick={() => setLightThemePreset('amber')}
+                    className={`w-4 h-4 rounded-full transition-all relative ${
+                      lightThemePreset === 'amber' 
+                        ? 'ring-2 ring-amber-500 scale-110 border-amber-600' 
+                        : 'border border-slate-300 hover:scale-105'
+                    }`}
+                    style={{ backgroundColor: '#f59e0b' }}
+                    title="Warm Amber Sunset (Gold)"
+                  >
+                    {lightThemePreset === 'amber' && <span className="absolute inset-0 m-auto w-1 h-1 bg-white rounded-full" />}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <button
+              onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')}
+              className="p-2.5 bg-[#121B2E]/60 hover:bg-[#121B2E]/90 text-slate-200 hover:text-white rounded-xl border border-slate-800 shadow-md cursor-pointer transition-all flex items-center justify-center shrink-0"
+              title={theme === 'dark' ? "Ganti ke Mode Terang (Light Mode)" : "Ganti ke Mode Gelap (Dark Mode)"}
+            >
+              {theme === 'dark' ? (
+                <Sun className="w-4 h-4 text-amber-400" />
+              ) : (
+                <Moon className="w-4 h-4 text-[#6366F1]" />
+              )}
+            </button>
+
             <label
               htmlFor="excel-uploader"
-              className="px-4 py-2 bg-[#121B2E]/60 hover:bg-[#121B2E] text-xs font-bold text-slate-200 hover:text-white rounded-xl border border-slate-800 shadow-md cursor-pointer transition-all flex items-center gap-2 font-display uppercase tracking-wider w-full justify-center sm:w-auto"
+              className="px-4 py-2 bg-[#121B2E]/60 hover:bg-[#121B2E] text-xs font-bold text-slate-200 hover:text-white rounded-xl border border-slate-800 shadow-md cursor-pointer transition-all flex items-center gap-2 font-display uppercase tracking-wider justify-center sm:w-auto"
             >
               <Upload className="w-3.5 h-3.5 text-teal-400 font-bold" />
               Upload Atlet Excel
@@ -986,7 +1088,7 @@ export default function App() {
               )}
 
               {activeTab === 'leaderboard' && (
-                <LeaderboardPodium leaderboard={currentLeaderboard} />
+                <LeaderboardPodium leaderboard={currentLeaderboard} eventName={events.find(e => e.id === activeEventId)?.name} />
               )}
 
               {activeTab === 'patungan' && (

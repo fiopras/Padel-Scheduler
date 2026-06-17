@@ -3,6 +3,35 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Play, Check, RotateCcw, Calendar, Swords, Plus, Minus, Search, Landmark } from 'lucide-react';
 import { Match, Player } from '../types';
 
+function OngoingMatchTimer({ startTime }: { startTime?: number }) {
+  const [elapsed, setElapsed] = React.useState(0);
+
+  React.useEffect(() => {
+    if (!startTime) return;
+
+    const calculateElapsed = () => {
+      const diff = Math.floor((Date.now() - startTime) / 1000);
+      setElapsed(diff > 0 ? diff : 0);
+    };
+    calculateElapsed();
+
+    const interval = setInterval(calculateElapsed, 1000);
+    return () => clearInterval(interval);
+  }, [startTime]);
+
+  const formatTime = (seconds: number) => {
+    const min = Math.floor(seconds / 60);
+    const sec = seconds % 60;
+    return `${min}:${sec < 10 ? '0' : ''}${sec}`;
+  };
+
+  return (
+    <span className="font-mono text-teal-400 font-extrabold text-[10px] bg-teal-500/15 px-2 py-0.5 rounded-lg border border-teal-500/25 tracking-tight flex items-center gap-1">
+      ⏱️ {formatTime(elapsed)}
+    </span>
+  );
+}
+
 interface MatchListProps {
   matches: Match[];
   players: Player[];
@@ -192,11 +221,12 @@ export default function MatchList({
                         Completed
                       </span>
                     ) : m.status === 'In Progress' ? (
-                      <span className="relative flex items-center gap-1.5">
+                      <span className="relative flex items-center gap-1.5 flex-wrap">
                         <span className="h-1.5 w-1.5 rounded-full bg-teal-400 animate-ping" />
                         <span className="px-2 py-0.5 text-[9px] font-black text-teal-400 bg-teal-950/45 border border-teal-400/30 uppercase tracking-widest font-display">
                           Playing
                         </span>
+                        <OngoingMatchTimer startTime={m.startTime} />
                       </span>
                     ) : (
                       <span className="px-2.5 py-0.5 rounded-md text-[9px] font-black text-slate-400 bg-[#0c1221] border border-slate-800 uppercase tracking-widest font-display">
@@ -364,8 +394,21 @@ export default function MatchList({
                   ) : (
                     <>
                       {/* Fully complete score locks, offer quick score resets */}
-                      <div className="text-[10px] text-slate-450 font-bold font-sans text-center sm:text-left">
-                        Selesai • Skor hasil disimpan.
+                      <div className="text-[10px] text-slate-450 font-bold font-sans text-center sm:text-left flex flex-wrap items-center gap-2">
+                        <span>Selesai • Skor hasil disimpan.</span>
+                        {m.durationSeconds ? (
+                          <span className="font-mono text-teal-400 font-extrabold bg-teal-500/10 px-2 py-0.5 rounded-lg border border-teal-500/10 flex items-center gap-1">
+                            ⏱️ Main selama: {(() => {
+                              const min = Math.floor(m.durationSeconds / 60);
+                              const sec = m.durationSeconds % 60;
+                              return min > 0 ? `${min}m ${sec}s` : `${sec}s`;
+                            })()}
+                          </span>
+                        ) : m.duration ? (
+                          <span className="font-mono text-teal-400 font-extrabold bg-teal-500/10 px-2 py-0.5 rounded-lg border border-teal-500/10 flex items-center gap-1">
+                            ⏱️ Main selama: ~{m.duration} menit
+                          </span>
+                        ) : null}
                       </div>
                       <button
                         id={`btn-reset-${m.id}`}
