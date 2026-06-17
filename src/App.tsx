@@ -422,6 +422,27 @@ export default function App() {
     showNotification(`${newP.name} berhasil ditambahkan ke Roster.`);
   };
 
+  // Batch player addition from AI vision
+  const handleAddPlayersBatch = (newPlayersList: { name: string; gender: GenderType; skillLevel: SkillLevelType }[]) => {
+    const parsedPlayers: Player[] = newPlayersList.map((newP, index) => ({
+      id: `usr-${Date.now()}-${index}-${Math.floor(Math.random() * 1000)}`,
+      name: newP.name,
+      gender: newP.gender || 'Laki-laki',
+      skillLevel: newP.skillLevel || 'Intermediate',
+      matchesPlayed: 0,
+      matchesWon: 0,
+      matchesLost: 0,
+      points: 0,
+      gamesWon: 0,
+      gamesLost: 0,
+      playingTime: 0,
+      winRate: 0,
+    }));
+
+    setPlayers((prev) => [...prev, ...parsedPlayers]);
+    showNotification(`Berhasil mendeteksi & menambahkan ${newPlayersList.length} atlet dari SS Reclub! 🎾`, 'success');
+  };
+
   // Drag & drop sorting callback
   const handleReorderPlayers = (reordered: Player[]) => {
     setPlayers(reordered);
@@ -948,6 +969,7 @@ export default function App() {
                   onRemovePlayer={handleRemovePlayer}
                   onReorderPlayers={handleReorderPlayers}
                   onExcelUpload={handleExcelUpload}
+                  onAddPlayersBatch={handleAddPlayersBatch}
                 />
               )}
 

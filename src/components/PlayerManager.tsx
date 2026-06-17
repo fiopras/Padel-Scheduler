@@ -9,6 +9,7 @@ interface PlayerManagerProps {
   onRemovePlayer: (id: string) => void;
   onReorderPlayers: (reordered: Player[]) => void;
   onExcelUpload?: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  onAddPlayersBatch?: (newPlayers: { name: string; gender: GenderType; skillLevel: SkillLevelType }[]) => void;
 }
 
 export default function PlayerManager({
@@ -17,6 +18,7 @@ export default function PlayerManager({
   onRemovePlayer,
   onReorderPlayers,
   onExcelUpload,
+  onAddPlayersBatch,
 }: PlayerManagerProps) {
   // New Player Form State
   const [name, setName] = React.useState('');
@@ -28,6 +30,106 @@ export default function PlayerManager({
 
   // Drag and Drop State
   const [draggedIndex, setDraggedIndex] = React.useState<number | null>(null);
+
+  // AI-powered Player Extraction States
+  const [isAiRegistering, setIsAiRegistering] = React.useState(false);
+  const [aiError, setAiError] = React.useState<string | null>(null);
+  const [scanProgress, setScanProgress] = React.useState(0);
+  const [scanStatusText, setScanStatusText] = React.useState('Membaca berkas gambar...');
+
+  const handleReclubImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      setIsAiRegistering(true);
+      setScanProgress(5);
+      setScanStatusText('Membaca berkas gambar...');
+      setAiError(null);
+      
+      const fileReader = new FileReader();
+      fileReader.readAsDataURL(file);
+      fileReader.onload = async () => {
+        setScanProgress(15);
+        setScanStatusText('Memproses data gambar...');
+
+        let currentProgress = 15;
+        // Increment progress periodically up to 92% until api responds
+        const interval = setInterval(() => {
+          if (currentProgress < 92) {
+            const increment = currentProgress < 40 ? 8 : (currentProgress < 70 ? 4 : 2);
+            currentProgress += increment;
+            setScanProgress(currentProgress);
+            
+            if (currentProgress < 35) {
+              setScanStatusText('Mengompresi data untuk AI...');
+            } else if (currentProgress < 55) {
+              setScanStatusText('Sistem Visi Gemini AI memindai foto...');
+            } else if (currentProgress < 75) {
+              setScanStatusText('Mengekstrak list nama-nama atlet...');
+            } else if (currentProgress < 90) {
+              setScanStatusText('Memisahkan nama dan mendeteksi gender...');
+            } else {
+              setScanStatusText('Menyusun response roster...');
+            }
+          }
+        }, 350);
+
+        try {
+          const resultStr = fileReader.result as string;
+          const base64Data = resultStr.split(',')[1];
+          const mimeType = file.type;
+
+          const response = await fetch('/api/extract-players', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ base64Data, mimeType }),
+          });
+
+          clearInterval(interval);
+
+          if (!response.ok) {
+            const errData = await response.json().catch(() => ({}));
+            throw new Error(errData.error || 'Server mengalami kendala saat memproses gambar.');
+          }
+
+          const data = await response.json();
+          if (data && Array.isArray(data.players) && data.players.length > 0) {
+            setScanProgress(100);
+            setScanStatusText('Berhasil mengambil roster!');
+            if (onAddPlayersBatch) {
+              const mapped = data.players.map((item: any) => ({
+                name: item.name || 'Pemain Tanpa Nama',
+                gender: (item.gender === 'Perempuan' || item.gender === 'Lainnya') ? item.gender : 'Laki-laki',
+                skillLevel: 'Intermediate' as const
+              }));
+              onAddPlayersBatch(mapped);
+            }
+          } else {
+            setAiError('Tidak ada nama pemain yang terdeteksi dari screenshot. Pastikan screenshot memperlihatkan bagian roster "Participants" dengan jelas dan tajam.');
+          }
+        } catch (err: any) {
+          clearInterval(interval);
+          console.error('Error scanning screenshot:', err);
+          setAiError(err.message || 'Gagal terhubung dengan server AI.');
+        } finally {
+          setIsAiRegistering(false);
+        }
+      };
+      fileReader.onerror = () => {
+        throw new Error('Gagal membaca file gambar.');
+      };
+    } catch (err: any) {
+      console.error(err);
+      setAiError(err.message || 'Gagal membaca file gambar.');
+      setIsAiRegistering(false);
+    } finally {
+      // Clear value so the same file can be re-uploaded
+      e.target.value = '';
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -169,6 +271,87 @@ export default function PlayerManager({
                 className="hidden"
               />
             </label>
+          </div>
+        )}
+
+        {onAddPlayersBatch && (
+          <div className="pt-4 border-t border-slate-800/60 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-extrabold text-[#94A3B8] uppercase tracking-widest font-display flex items-center gap-1.5 animate-pulse">
+                <Sparkles className="w-3.5 h-3.5 text-teal-400 shrink-0" />
+                Daftar Instan via AI (Reclub)
+              </span>
+              <span className="text-[8px] bg-teal-500/15 text-teal-400 font-black px-1.5 py-0.5 rounded font-mono uppercase tracking-wider">
+                Eksperimental
+              </span>
+            </div>
+            
+            <p className="text-[10.5px] text-[#94A3B8] font-medium leading-relaxed">
+              Unggah screenshot halaman <b>Participants (CONFIRMED)</b> dari Reclub untuk pendaftaran instan!
+            </p>
+
+            <label
+              htmlFor="reclub-screeshot-uploader"
+              className={`flex flex-col items-center justify-center gap-2 px-4 py-5 rounded-2xl cursor-pointer transition-all duration-250 group text-center border border-dashed ${
+                isAiRegistering
+                  ? 'bg-teal-950/10 border-teal-505/40 pointer-events-none'
+                  : 'bg-slate-950/60 hover:bg-slate-950/90 border-slate-800 hover:border-teal-500/50'
+              }`}
+            >
+              <Upload className={`w-5 h-5 text-teal-450 opacity-80 group-hover:scale-110 transition-transform ${isAiRegistering ? 'animate-bounce' : ''}`} />
+              <div>
+                <span className="text-xs font-bold text-slate-200 group-hover:text-teal-400 block transition-colors leading-normal">
+                  {isAiRegistering ? 'Memindai Roster Pemain...' : 'Unggah Tangkapan Layar / SS'}
+                </span>
+                <span className="text-[9px] text-slate-550 block">PNG, JPG, JPEG, atau WEBP</span>
+              </div>
+              <input
+                id="reclub-screeshot-uploader"
+                type="file"
+                accept="image/*"
+                onChange={handleReclubImageUpload}
+                disabled={isAiRegistering}
+                className="hidden"
+              />
+            </label>
+
+            {/* Error Display */}
+            {aiError && (
+              <div className="p-2.5 rounded-xl bg-rose-950/15 border border-rose-500/20 text-[10.5px] text-rose-300 font-medium leading-relaxed">
+                {aiError}
+              </div>
+            )}
+
+            {/* Scanning animation with spinning tennis ball logo requested */}
+            {isAiRegistering && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.6rem', padding: '1rem', backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '1.2rem', marginTop: '0.5rem' }}>
+                  <div style={{ position: 'relative', width: '38px', height: '38px' }}>
+                    <div style={{ position: 'absolute', inset: '-6px', background: 'rgba(20, 184, 166, 0.15)', filter: 'blur(8px)', borderRadius: '9999px' }}></div>
+                    <div style={{ width: '100%', height: '100%', borderRadius: '9999px', background: 'linear-gradient(135deg, #14b8a6, #2dd4bf)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 15px -3px rgba(20, 184, 166, 0.3)', animation: 'spinTennisBall 1.4s cubic-bezier(0.4, 0, 0.2, 1) infinite' }}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="#020617" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round" style={{ width: '18px', height: '18px' }}>
+                        <circle cx="12" cy="12" r="10"></circle>
+                        <path d="M6.2 6.2C8.2 10 8.2 14 6.2 17.8"></path>
+                        <path d="M17.8 6.2C15.8 10 15.8 14 17.8 17.8"></path>
+                      </svg>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <h5 style={{ fontSize: '11px', fontWeight: '800', color: '#ffffff', margin: 0, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Mengekstrak Atlet</h5>
+                    <p style={{ fontSize: '9px', color: '#94a3b8', margin: '2px 0 0 0' }}>Sistem Visi Gemini AI</p>
+                  </div>
+
+                  {/* Percentage Counter Indicator */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: '180px', fontSize: '9px', fontWeight: 'bold', color: '#2dd4bf', marginTop: '0.2rem' }}>
+                    <span style={{ color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px' }}>{scanStatusText}</span>
+                    <span>{scanProgress}%</span>
+                  </div>
+
+                  {/* Elegant glowing loading bar styled with exact dynamic widths */}
+                  <div style={{ width: '100%', maxWidth: '180px', height: '5px', backgroundColor: '#0f172a', borderRadius: '9999px', overflow: 'hidden', border: '1px solid rgba(255,255,255,0.05)', position: 'relative' }}>
+                    <div style={{ height: '100%', background: 'linear-gradient(90deg, #14b8a6, #2dd4bf)', borderRadius: '9999px', width: `${scanProgress}%`, transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)' }}></div>
+                  </div>
+                </div>
+            )}
           </div>
         )}
       </div>
