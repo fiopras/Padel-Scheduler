@@ -1,5 +1,5 @@
 import React from 'react';
-import { UserPlus, Trash2, ArrowUpDown, Download, Search, Sparkles, Move, Upload } from 'lucide-react';
+import { UserPlus, Trash2, ArrowUpDown, Download, Search, Sparkles, Move, Upload, Link, FileSpreadsheet } from 'lucide-react';
 import { Player, GenderType, SkillLevelType } from '../types';
 import { downloadPlayerTemplate } from '../utils/excel';
 
@@ -36,6 +36,63 @@ export default function PlayerManager({
   const [aiError, setAiError] = React.useState<string | null>(null);
   const [scanProgress, setScanProgress] = React.useState(0);
   const [scanStatusText, setScanStatusText] = React.useState('Membaca berkas gambar...');
+
+  // Reclub Importer Selection State
+  const [importMethod, setImportMethod] = React.useState<'link' | 'screenshot' | 'excel'>('link');
+
+  // Reclub URL Importer States
+  const [reclubUrl, setReclubUrl] = React.useState('');
+  const [isReclubLoading, setIsReclubLoading] = React.useState(false);
+  const [reclubUrlError, setReclubUrlError] = React.useState<string | null>(null);
+  const [reclubUrlSuccess, setReclubUrlSuccess] = React.useState<string | null>(null);
+
+  const handleReclubUrlImport = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reclubUrl.trim()) return;
+
+    try {
+      setIsReclubLoading(true);
+      setReclubUrlError(null);
+      setReclubUrlSuccess(null);
+
+      const response = await fetch('/api/import-reclub', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ url: reclubUrl.trim() }),
+      });
+
+      if (!response.ok) {
+        const errData = await response.json().catch(() => ({}));
+        throw new Error(errData.error || 'Terjadi kesalahan sistem saat menghubungi server Reclub.');
+      }
+
+      const data = await response.json();
+      if (!data.players || !Array.isArray(data.players) || data.players.length === 0) {
+        throw new Error('Tidak ada pemain roster aktif yang ditemukan atau data kosong.');
+      }
+
+      // Convert roster to the structure expected by onAddPlayersBatch
+      const mapped = data.players.map((item: any) => ({
+        name: item.name || 'Pemain Tanpa Nama',
+        gender: item.gender === 'Perempuan' ? ('Perempuan' as const) : ('Laki-laki' as const),
+        skillLevel: (['Beginner', 'Intermediate', 'Advanced'].includes(item.skillLevel) ? item.skillLevel : 'Intermediate') as any
+      }));
+
+      if (onAddPlayersBatch) {
+        onAddPlayersBatch(mapped);
+      }
+
+      setReclubUrlSuccess(`Berhasil mengimpor ${data.players.length} atlet dari "${data.eventName}" di ${data.venue}! 🚀`);
+      setReclubUrl('');
+    } catch (err: any) {
+      console.error('Reclub link import error:', err);
+      setReclubUrlError(err.message || 'Gagal mengimpor daftar atlet.');
+    } finally {
+      setIsReclubLoading(false);
+    }
+  };
 
   const handleReclubImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -172,7 +229,7 @@ export default function PlayerManager({
             <UserPlus className="w-5 h-5 text-teal-400" />
             Tambah Atlet Baru
           </h3>
-          <p className="text-xs text-slate-400 mt-1">Daftarkan roster secara manual atau unduh format template Excel di bawah.</p>
+          <p className="text-xs text-slate-400 mt-1">Daftarkan roster secara manual atau sinkronisasikan secara otomatis via link Reclub di bawah.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -235,95 +292,157 @@ export default function PlayerManager({
           </button>
         </form>
 
-        <div className="pt-5 border-t border-slate-800/60 text-center space-y-2">
-          <p className="text-[11px] text-[#94A3B8] font-medium">Bekerja lebih cepat lewat berkas luring:</p>
-          <button
-            id="btn-download-template"
-            onClick={downloadPlayerTemplate}
-            className="inline-flex items-center gap-1.5 text-[10px] font-extrabold text-teal-400 hover:text-teal-350 transition-colors uppercase tracking-widest font-display"
-          >
-            <Download className="w-3.5 h-3.5" />
-            Download Excel Template
-          </button>
-        </div>
-
-        {onExcelUpload && (
-          <div className="pt-4 border-t border-slate-800/60 space-y-3">
-            <p className="text-[11px] text-slate-400 font-medium text-center">Sudah punya database pemain? Unggah langsung di sini:</p>
-            <label
-              htmlFor="excel-uploader-sidebar"
-              className="flex flex-col items-center justify-center gap-2 px-4 py-5 bg-slate-950/60 hover:bg-slate-950/90 border border-dashed border-slate-800 hover:border-teal-500/50 rounded-2xl cursor-pointer transition-all duration-200 group text-center"
-            >
-              <Upload className="w-5 h-5 text-teal-450 group-hover:scale-110 transition-transform" />
-              <div>
-                <span className="text-xs font-bold text-slate-200 group-hover:text-teal-400 block transition-colors leading-normal">
-                  Pilih / Unggah Berkas Excel
-                </span>
-                <span className="text-[10px] text-slate-500 block">
-                  (.xlsx, .xls)
-                </span>
-              </div>
-              <input
-                id="excel-uploader-sidebar"
-                type="file"
-                accept=".xlsx, .xls"
-                onChange={onExcelUpload}
-                className="hidden"
-              />
-            </label>
+        <div className="pt-4 border-t border-slate-800/60 space-y-4">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-extrabold text-teal-400 uppercase tracking-widest font-display flex items-center gap-1.5 label-import">
+              <Sparkles className="w-3.5 h-3.5 text-teal-400" />
+              Metode Impor Atlet
+            </span>
+            <span className="text-[8px] bg-teal-500/15 text-teal-400 font-mono font-black px-1.5 py-0.5 rounded uppercase tracking-wider">
+              Cepat & AI
+            </span>
           </div>
-        )}
 
-        {onAddPlayersBatch && (
-          <div className="pt-4 border-t border-slate-800/60 space-y-2.5">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] font-extrabold text-[#94A3B8] uppercase tracking-widest font-display flex items-center gap-1.5 animate-pulse">
-                <Sparkles className="w-3.5 h-3.5 text-teal-400 shrink-0" />
-                Daftar Instan via AI (Reclub)
-              </span>
-              <span className="text-[8px] bg-teal-500/15 text-teal-400 font-black px-1.5 py-0.5 rounded font-mono uppercase tracking-wider">
-                Eksperimental
-              </span>
-            </div>
-            
-            <p className="text-[10.5px] text-[#94A3B8] font-medium leading-relaxed">
-              Unggah screenshot halaman <b>Participants (CONFIRMED)</b> dari Reclub untuk pendaftaran instan!
-            </p>
-
-            <label
-              htmlFor="reclub-screeshot-uploader"
-              className={`flex flex-col items-center justify-center gap-2 px-4 py-5 rounded-2xl cursor-pointer transition-all duration-250 group text-center border border-dashed ${
-                isAiRegistering
-                  ? 'bg-teal-950/10 border-teal-505/40 pointer-events-none'
-                  : 'bg-slate-950/60 hover:bg-slate-950/90 border-slate-800 hover:border-teal-500/50'
+          {/* Toggle Tab Bar */}
+          <div className="grid grid-cols-3 gap-1 p-1 bg-slate-950/60 border border-slate-850/60 rounded-xl">
+            <button
+              id="tab-import-link"
+              type="button"
+              onClick={() => setImportMethod('link')}
+              className={`py-2 text-[10px] font-bold rounded-lg transition-all flex flex-col items-center gap-1 cursor-pointer select-none ${
+                importMethod === 'link'
+                  ? 'bg-teal-500/10 text-teal-400 border border-teal-500/20 font-black shadow-inner shadow-teal-500/5'
+                  : 'text-slate-400 hover:text-white border border-transparent'
               }`}
             >
-              <Upload className={`w-5 h-5 text-teal-450 opacity-80 group-hover:scale-110 transition-transform ${isAiRegistering ? 'animate-bounce' : ''}`} />
-              <div>
-                <span className="text-xs font-bold text-slate-200 group-hover:text-teal-400 block transition-colors leading-normal">
-                  {isAiRegistering ? 'Memindai Roster Pemain...' : 'Unggah Tangkapan Layar / SS'}
-                </span>
-                <span className="text-[9px] text-slate-550 block">PNG, JPG, JPEG, atau WEBP</span>
-              </div>
-              <input
-                id="reclub-screeshot-uploader"
-                type="file"
-                accept="image/*"
-                onChange={handleReclubImageUpload}
-                disabled={isAiRegistering}
-                className="hidden"
-              />
-            </label>
+              <Link className="w-3.5 h-3.5 shrink-0" />
+              Link
+            </button>
+            <button
+              id="tab-import-ss"
+              type="button"
+              onClick={() => setImportMethod('screenshot')}
+              className={`py-2 text-[10px] font-bold rounded-lg transition-all flex flex-col items-center gap-1 cursor-pointer select-none ${
+                importMethod === 'screenshot'
+                  ? 'bg-teal-500/10 text-teal-400 border border-teal-500/20 font-black shadow-inner shadow-teal-500/5'
+                  : 'text-slate-400 hover:text-white border border-transparent'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              Screenshot
+            </button>
+            <button
+              id="tab-import-excel"
+              type="button"
+              onClick={() => setImportMethod('excel')}
+              className={`py-2 text-[10px] font-bold rounded-lg transition-all flex flex-col items-center gap-1 cursor-pointer select-none ${
+                importMethod === 'excel'
+                  ? 'bg-teal-400/10 text-teal-400 border border-teal-500/20 font-black shadow-inner shadow-teal-500/5'
+                  : 'text-slate-400 hover:text-white border border-transparent'
+              }`}
+            >
+              <FileSpreadsheet className="w-3.5 h-3.5 shrink-0" />
+              Excel
+            </button>
+          </div>
 
-            {/* Error Display */}
-            {aiError && (
-              <div className="p-2.5 rounded-xl bg-rose-950/15 border border-rose-500/20 text-[10.5px] text-rose-300 font-medium leading-relaxed">
-                {aiError}
-              </div>
-            )}
+          {/* 1. LINK IMPORTER */}
+          {importMethod === 'link' && (
+            <div className="space-y-3.5">
+              <p className="text-[10.5px] text-[#94A3B8] font-medium leading-relaxed">
+                Masukkan link/URL dari Reclub (misalnya: <code>https://reclub.co/id/m/E93XSO</code>) untuk mengimpor seluruh roster atlet secara langsung!
+              </p>
 
-            {/* Scanning animation with spinning tennis ball logo requested */}
-            {isAiRegistering && (
+              <form onSubmit={handleReclubUrlImport} className="space-y-2">
+                <div className="flex gap-2">
+                  <input
+                    id="reclub-url-input"
+                    type="text"
+                    placeholder="https://reclub.co/id/m/..."
+                    value={reclubUrl}
+                    onChange={(e) => setReclubUrl(e.target.value)}
+                    disabled={isReclubLoading}
+                    className="flex-1 bg-slate-950/85 border border-slate-850 rounded-xl px-2.5 py-2 text-xs text-white placeholder-slate-700 focus:outline-none focus:border-teal-400 focus:ring-1 focus:ring-teal-400/20 transition-all font-sans"
+                  />
+                  <button
+                    id="btn-reclub-sync"
+                    type="submit"
+                    disabled={isReclubLoading || !reclubUrl.trim()}
+                    className="bg-teal-500 hover:bg-teal-400 disabled:opacity-40 text-slate-950 text-[10px] font-black px-3.5 rounded-xl transition-all flex items-center justify-center shrink-0 cursor-pointer uppercase tracking-wider font-display"
+                  >
+                    {isReclubLoading ? 'Mengimpor...' : 'Impor'}
+                  </button>
+                </div>
+              </form>
+
+              {/* Reclub Loading State */}
+              {isReclubLoading && (
+                <div className="flex flex-col items-center gap-2 p-3 bg-slate-950/65 border border-slate-850 rounded-xl">
+                  <div className="flex items-center gap-2 text-xs text-teal-400 font-bold">
+                    <div style={{
+                      width: '14px',
+                      height: '14px',
+                      border: '2px solid rgba(20, 184, 166, 0.2)',
+                      borderTopColor: '#14b8a6',
+                      borderRadius: '50%',
+                    }} className="animate-spin" />
+                    <span>Menghubungi Reclub & Mengekstrak...</span>
+                  </div>
+                </div>
+              )}
+
+              {/* Error Message */}
+              {reclubUrlError && (
+                <div className="p-2.5 rounded-xl bg-rose-950/15 border border-rose-500/20 text-[10.5px] text-rose-300 font-medium leading-relaxed">
+                  ⚠️ {reclubUrlError}
+                </div>
+              )}
+
+              {/* Success Message */}
+              {reclubUrlSuccess && (
+                <div className="p-2.5 rounded-xl bg-teal-950/15 border border-teal-500/20 text-[10.5px] text-teal-300 font-medium leading-relaxed">
+                  ✅ {reclubUrlSuccess}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 2. SCREENSHOT IMPORTER (AI SCANNER) */}
+          {importMethod === 'screenshot' && (
+            <div className="space-y-3.5">
+              <p className="text-[10.5px] text-[#94A3B8] font-medium leading-relaxed">
+                Silakan unggah screenshot halaman <b>Participants (CONFIRMED)</b> dari Reclub untuk pendaftaran instan bertenaga <b>Gemini Vision AI</b>!
+              </p>
+
+              <label
+                htmlFor="reclub-ss-uploader-sidebar"
+                className={`flex flex-col items-center justify-center gap-3 px-4 py-6 rounded-2xl cursor-pointer transition-all duration-200 group text-center border border-dashed ${
+                  isAiRegistering
+                    ? 'bg-teal-950/10 border-teal-500/40 pointer-events-none'
+                    : 'bg-slate-950/60 hover:bg-slate-950/90 border-slate-800 hover:border-teal-500/50'
+                }`}
+              >
+                <Upload className={`w-5 h-5 text-teal-400 opacity-80 group-hover:scale-110 transition-transform ${isAiRegistering ? 'animate-bounce' : ''}`} />
+                <div>
+                  <span className="text-xs font-bold text-slate-200 group-hover:text-teal-400 block transition-colors leading-normal font-sans">
+                    {isAiRegistering ? 'Memindai Screenshot...' : 'Pilih/Unggah Screenshot'}
+                  </span>
+                  <span className="text-[10px] text-slate-500 block font-mono">
+                    PNG, JPG, JPEG, WEBP
+                  </span>
+                </div>
+                <input
+                  id="reclub-ss-uploader-sidebar"
+                  type="file"
+                  accept="image/*"
+                  onChange={handleReclubImageUpload}
+                  disabled={isAiRegistering}
+                  className="hidden"
+                />
+              </label>
+
+              {/* Scanning animation with spinning tennis ball logo */}
+              {isAiRegistering && (
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.6rem', padding: '1rem', backgroundColor: '#020617', border: '1px solid #1e293b', borderRadius: '1.2rem', marginTop: '0.5rem' }}>
                   <div style={{ position: 'relative', width: '38px', height: '38px' }}>
                     <div style={{ position: 'absolute', inset: '-6px', background: 'rgba(20, 184, 166, 0.15)', filter: 'blur(8px)', borderRadius: '9999px' }}></div>
@@ -341,7 +460,7 @@ export default function PlayerManager({
                   </div>
 
                   {/* Percentage Counter Indicator */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', width: '100%', maxWidth: '180px', fontSize: '9px', fontWeight: 'bold', color: '#2dd4bf', marginTop: '0.2rem' }}>
+                  <div style={{ display: 'flex', justifyItems: 'center', justifyContent: 'space-between', width: '100%', maxWidth: '180px', fontSize: '9px', fontWeight: 'bold', color: '#2dd4bf', marginTop: '0.2rem' }}>
                     <span style={{ color: '#94a3b8', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px' }}>{scanStatusText}</span>
                     <span>{scanProgress}%</span>
                   </div>
@@ -351,9 +470,62 @@ export default function PlayerManager({
                     <div style={{ height: '100%', background: 'linear-gradient(90deg, #14b8a6, #2dd4bf)', borderRadius: '9999px', width: `${scanProgress}%`, transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)' }}></div>
                   </div>
                 </div>
-            )}
-          </div>
-        )}
+              )}
+
+              {/* Error Display */}
+              {aiError && (
+                <div className="p-2.5 rounded-xl bg-rose-950/15 border border-rose-500/20 text-[10.5px] text-rose-300 font-medium leading-relaxed animate-shake">
+                  ⚠️ {aiError}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 3. EXCEL OFFLINE IMPORTER */}
+          {importMethod === 'excel' && (
+            <div className="space-y-4">
+              <div className="p-3 bg-slate-950/60 border border-slate-850/80 rounded-2xl text-center space-y-2">
+                <p className="text-[11px] text-[#94A3B8] font-medium leading-normal">Unduh berkas template Excel luring dahulu:</p>
+                <button
+                  id="btn-download-template"
+                  type="button"
+                  onClick={downloadPlayerTemplate}
+                  className="inline-flex items-center gap-1.5 text-[10px] font-extrabold text-teal-400 hover:text-teal-350 transition-colors uppercase tracking-widest font-display cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Download Excel Template
+                </button>
+              </div>
+
+              {onExcelUpload && (
+                <div className="space-y-2.5">
+                  <p className="text-[11px] text-slate-400 font-medium text-center">Silakan unggah setelah mengisi data atlet:</p>
+                  <label
+                    htmlFor="excel-uploader-sidebar"
+                    className="flex flex-col items-center justify-center gap-2 px-4 py-5 bg-slate-950/60 hover:bg-slate-950/90 border border-dashed border-slate-800 hover:border-teal-500/50 rounded-2xl cursor-pointer transition-all duration-200 group text-center"
+                  >
+                    <Upload className="w-5 h-5 text-teal-400 group-hover:scale-110 transition-transform" />
+                    <div>
+                      <span className="text-xs font-bold text-slate-200 group-hover:text-teal-400 block transition-colors leading-normal font-sans">
+                        Pilih / Unggah Berkas Excel
+                      </span>
+                      <span className="text-[10px] text-slate-500 block font-mono">
+                        (.xlsx, .xls)
+                      </span>
+                    </div>
+                    <input
+                      id="excel-uploader-sidebar"
+                      type="file"
+                      accept=".xlsx, .xls"
+                      onChange={onExcelUpload}
+                      className="hidden"
+                    />
+                  </label>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* 2. Drag & Drop Player List */}
