@@ -131,38 +131,73 @@ Make sure to clean the names, remove duplicate characters or trailing spaces, an
   // Server-side Reclub scrap-and-import API endpoint
   app.post("/api/import-reclub", async (req, res) => {
     try {
-      const { url } = req.body;
-      if (!url) {
-        return res.status(400).json({ error: "Missing Reclub url parameter." });
-      }
+      const { url, rawHtml } = req.body;
+      let html = "";
 
-      const lowerUrl = url.toLowerCase();
-      if (!lowerUrl.includes("reclub.co")) {
-        return res.status(400).json({ error: "URL harus berasal dari reclub.co" });
-      }
-
-      console.log(`[Reclub Import] Fetching URL: ${url}`);
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+      if (rawHtml) {
+        html = rawHtml;
+        console.log(`[Reclub Import] Parsing via raw HTML source payload (${rawHtml.length} chars)`);
+      } else {
+        if (!url) {
+          return res.status(400).json({ error: "Masukkan link URL Reclub terlebih dahulu." });
         }
-      });
 
-      if (!response.ok) {
-        throw new Error(`Gagal mengambil data dari Reclub: HTTP ${response.status}`);
+        let targetUrl = url.trim();
+        if (!/^https?:\/\//i.test(targetUrl)) {
+          targetUrl = 'https://' + targetUrl;
+        }
+
+        const lowerUrl = targetUrl.toLowerCase();
+        if (!lowerUrl.includes("reclub.co")) {
+          return res.status(400).json({ error: "URL harus berasal dari reclub.co" });
+        }
+
+        console.log(`[Reclub Import] Fetching URL: ${targetUrl}`);
+        
+        // Setup AbortController for a fast 1.5-second timeout to fail-fast when blocked by Cloudflare (prevent long hangs)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 1500);
+
+        try {
+          const response = await fetch(targetUrl, {
+            signal: controller.signal,
+            headers: {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            }
+          });
+
+          clearTimeout(timeoutId);
+
+          if (!response.ok) {
+            throw new Error(`Gagal mengambil data dari Reclub (HTTP ${response.status}). Batasan keamanan/Cloudflare dari server Reclub membatasi akses otomatis dari server luring.`);
+          }
+
+          html = await response.text();
+        } catch (fetchErr: any) {
+          clearTimeout(timeoutId);
+          if (fetchErr.name === 'AbortError') {
+            throw new Error("Koneksi langsung diblokir oleh sistem keamanan Cloudflare Reclub (Timeout). Silakan klik tombol 'Gunakan Metode Paste HTML' di bawah untuk mengekstrak data 100% instan tanpa hambatan server!");
+          }
+          throw fetchErr;
+        }
       }
-
-      const html = await response.text();
 
       // Search for <script id="__NUXT_DATA__">
-      const match = html.match(/<script[^>]*id="__NUXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i);
-      if (!match) {
-        throw new Error("Gagal menemukan data silsilah permainan (__NUXT_DATA__) dari Reclub. Pastikan URL benar dan publik.");
+      let match = html.match(/<script[^>]*id="__NUXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i);
+      let rawJson = "";
+      if (match) {
+        rawJson = decodeHTMLEntities(match[1].trim());
+      } else {
+        const cleanHtml = html.trim();
+        if (cleanHtml.startsWith('[') && cleanHtml.endsWith(']')) {
+          rawJson = cleanHtml;
+        } else {
+          throw new Error("Gagal menemukan struktur roster atlet (__NUXT_DATA__) dari input yang Anda masukkan. Pastikan Anda menyalin data HTML halaman pertandingan seutuhnya.");
+        }
       }
 
-      const rawJson = decodeHTMLEntities(match[1].trim());
       const parsedArray = JSON.parse(rawJson);
 
       if (!Array.isArray(parsedArray)) {

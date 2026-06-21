@@ -42,25 +42,32 @@ export default function PlayerManager({
 
   // Reclub URL Importer States
   const [reclubUrl, setReclubUrl] = React.useState('');
+  const [useRawHtml, setUseRawHtml] = React.useState(false);
+  const [rawHtmlText, setRawHtmlText] = React.useState('');
   const [isReclubLoading, setIsReclubLoading] = React.useState(false);
   const [reclubUrlError, setReclubUrlError] = React.useState<string | null>(null);
   const [reclubUrlSuccess, setReclubUrlSuccess] = React.useState<string | null>(null);
 
   const handleReclubUrlImport = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!reclubUrl.trim()) return;
+    if (useRawHtml && !rawHtmlText.trim()) return;
+    if (!useRawHtml && !reclubUrl.trim()) return;
 
     try {
       setIsReclubLoading(true);
       setReclubUrlError(null);
       setReclubUrlSuccess(null);
 
+      const requestBody = useRawHtml 
+        ? { rawHtml: rawHtmlText.trim() } 
+        : { url: reclubUrl.trim() };
+
       const response = await fetch('/api/import-reclub', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ url: reclubUrl.trim() }),
+        body: JSON.stringify(requestBody),
       });
 
       if (!response.ok) {
@@ -84,8 +91,9 @@ export default function PlayerManager({
         onAddPlayersBatch(mapped);
       }
 
-      setReclubUrlSuccess(`Berhasil mengimpor ${data.players.length} atlet dari "${data.eventName}" di ${data.venue}! 🚀`);
+      setReclubUrlSuccess(`Berhasil mengimpor ${data.players.length} atlet dari "${data.eventName}" di "${data.venue}"! 🚀`);
       setReclubUrl('');
+      setRawHtmlText('');
     } catch (err: any) {
       console.error('Reclub link import error:', err);
       setReclubUrlError(err.message || 'Gagal mengimpor daftar atlet.');
@@ -349,31 +357,81 @@ export default function PlayerManager({
           {/* 1. LINK IMPORTER */}
           {importMethod === 'link' && (
             <div className="space-y-3.5">
-              <p className="text-[10.5px] text-[#94A3B8] font-medium leading-relaxed">
-                Masukkan link/URL dari Reclub (misalnya: <code>https://reclub.co/id/m/E93XSO</code>) untuk mengimpor seluruh roster atlet secara langsung!
-              </p>
+              {!useRawHtml ? (
+                <>
+                  <p className="text-[10.5px] text-[#94A3B8] font-medium leading-relaxed">
+                    Masukkan link/URL dari Reclub (misalnya: <code>https://reclub.co/id/m/E93XSO</code>) untuk mengimpor seluruh roster atlet secara langsung!
+                  </p>
 
-              <form onSubmit={handleReclubUrlImport} className="space-y-2">
-                <div className="flex gap-2">
-                  <input
-                    id="reclub-url-input"
-                    type="text"
-                    placeholder="https://reclub.co/id/m/..."
-                    value={reclubUrl}
-                    onChange={(e) => setReclubUrl(e.target.value)}
-                    disabled={isReclubLoading}
-                    className="flex-1 bg-slate-950/85 border border-slate-850 rounded-xl px-2.5 py-2 text-xs text-white placeholder-slate-700 focus:outline-none focus:border-teal-400 focus:ring-1 focus:ring-teal-400/20 transition-all font-sans"
-                  />
-                  <button
-                    id="btn-reclub-sync"
-                    type="submit"
-                    disabled={isReclubLoading || !reclubUrl.trim()}
-                    className="bg-teal-500 hover:bg-teal-400 disabled:opacity-40 text-slate-950 text-[10px] font-black px-3.5 rounded-xl transition-all flex items-center justify-center shrink-0 cursor-pointer uppercase tracking-wider font-display"
-                  >
-                    {isReclubLoading ? 'Mengimpor...' : 'Impor'}
-                  </button>
-                </div>
-              </form>
+                  <form onSubmit={handleReclubUrlImport} className="space-y-2">
+                    <div className="flex gap-2">
+                      <input
+                        id="reclub-url-input"
+                        type="text"
+                        placeholder="https://reclub.co/id/m/..."
+                        value={reclubUrl}
+                        onChange={(e) => setReclubUrl(e.target.value)}
+                        disabled={isReclubLoading}
+                        className="flex-1 bg-slate-950/85 border border-slate-850 rounded-xl px-2.5 py-2 text-xs text-white placeholder-slate-700 focus:outline-none focus:border-teal-400 focus:ring-1 focus:ring-teal-400/20 transition-all font-sans"
+                      />
+                      <button
+                        id="btn-reclub-sync"
+                        type="submit"
+                        disabled={isReclubLoading || !reclubUrl.trim()}
+                        className="bg-teal-500 hover:bg-teal-400 disabled:opacity-40 text-slate-950 text-[10px] font-black px-3.5 rounded-xl transition-all flex items-center justify-center shrink-0 cursor-pointer uppercase tracking-wider font-display"
+                      >
+                        {isReclubLoading ? 'Mengimpor...' : 'Impor'}
+                      </button>
+                    </div>
+                  </form>
+                </>
+              ) : (
+                <>
+                  <div className="space-y-1.5">
+                    <p className="text-[10.5px] text-[#94A3B8] font-semibold leading-normal">
+                      Metode Salin-Tempel HTML Halaman Reclub
+                    </p>
+                    <p className="text-[9.5px] text-slate-400 leading-normal">
+                      1. Buka halaman pertandingan Reclub di peramban Anda.<br/>
+                      2. Klik kanan lalu pilih <b>Page Source / Lihat Sumber Halaman</b> (atau tekan <kbd className="bg-slate-900 border border-slate-800 px-1 py-0.5 rounded text-teal-400">Ctrl+U</kbd>).<br/>
+                      3. Pilih semua kode (<kbd className="bg-slate-900 border border-slate-800 px-1 py-0.5 rounded text-teal-400">Ctrl+A</kbd>), salin (<kbd className="bg-slate-900 border border-slate-800 px-1 py-0.5 rounded text-teal-400">Ctrl+C</kbd>), lalu tempel di bawah:
+                    </p>
+                  </div>
+
+                  <form onSubmit={handleReclubUrlImport} className="space-y-2">
+                    <textarea
+                      id="reclub-raw-html-input"
+                      placeholder="Tempelkan seluruh kode sumber atau teks script Nuxt di sini..."
+                      value={rawHtmlText}
+                      onChange={(e) => setRawHtmlText(e.target.value)}
+                      disabled={isReclubLoading}
+                      rows={4}
+                      className="w-full bg-slate-950/85 border border-slate-850 rounded-xl px-2.5 py-2 text-[10.5px] text-white placeholder-slate-700 focus:outline-none focus:border-teal-400 focus:ring-1 focus:ring-teal-400/20 transition-all font-mono"
+                    />
+                    <button
+                      id="btn-reclub-sync-html"
+                      type="submit"
+                      disabled={isReclubLoading || !rawHtmlText.trim()}
+                      className="w-full bg-teal-500 hover:bg-teal-400 disabled:opacity-40 text-slate-950 text-[10px] font-black py-2.5 rounded-xl transition-all flex items-center justify-center cursor-pointer uppercase tracking-wider font-display"
+                    >
+                      {isReclubLoading ? 'Mengekstrak roster...' : 'Ekstrak Roster Atlet'}
+                    </button>
+                  </form>
+                </>
+              )}
+
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUseRawHtml(!useRawHtml);
+                    setReclubUrlError(null);
+                  }}
+                  className="text-[10px] text-teal-400 hover:text-teal-300 font-extrabold tracking-wide uppercase hover:underline"
+                >
+                  {useRawHtml ? "← Gunakan Link URL Otomatis" : "⚠️ Link Error? Gunakan Metode Paste HTML"}
+                </button>
+              </div>
 
               {/* Reclub Loading State */}
               {isReclubLoading && (
@@ -386,15 +444,20 @@ export default function PlayerManager({
                       borderTopColor: '#14b8a6',
                       borderRadius: '50%',
                     }} className="animate-spin" />
-                    <span>Menghubungi Reclub & Mengekstrak...</span>
+                    <span>Mengekstrak roster atlet Reclub...</span>
                   </div>
                 </div>
               )}
 
               {/* Error Message */}
               {reclubUrlError && (
-                <div className="p-2.5 rounded-xl bg-rose-950/15 border border-rose-500/20 text-[10.5px] text-rose-300 font-medium leading-relaxed">
+                <div className="p-2.5 rounded-xl bg-rose-950/15 border border-rose-500/25 text-[10.5px] text-rose-300 font-medium leading-relaxed">
                   ⚠️ {reclubUrlError}
+                  {!useRawHtml && (
+                    <div className="mt-1.5 pt-1.5 border-t border-rose-500/10 text-[9.5px] text-rose-400">
+                      Tips: Server Reclub membatasi robot dari cloud hosting. Silakan coba klik tombol <b>"Gunakan Metode Paste HTML"</b> di atas untuk menyalin langsung data halaman permainan Anda!
+                    </div>
+                  )}
                 </div>
               )}
 
