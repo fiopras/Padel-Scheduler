@@ -3,6 +3,42 @@ import { UserPlus, Trash2, ArrowUpDown, Download, Search, Sparkles, Move, Upload
 import { Player, GenderType, SkillLevelType } from '../types';
 import { downloadPlayerTemplate } from '../utils/excel';
 
+const compressImage = (dataUrl: string, maxWidth = 1024, maxHeight = 1024): Promise<string> => {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.src = dataUrl;
+    img.onload = () => {
+      let width = img.width;
+      let height = img.height;
+
+      if (width > maxWidth || height > maxHeight) {
+        if (width > height) {
+          height = Math.round((height * maxWidth) / width);
+          width = maxWidth;
+        } else {
+          width = Math.round((width * maxHeight) / height);
+          height = maxHeight;
+        }
+      }
+
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      } else {
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => {
+      resolve(dataUrl);
+    };
+  });
+};
+
 interface PlayerManagerProps {
   players: Player[];
   onAddPlayer: (player: { name: string; gender: GenderType; skillLevel: SkillLevelType }) => void;
@@ -142,8 +178,10 @@ export default function PlayerManager({
 
         try {
           const resultStr = fileReader.result as string;
-          const base64Data = resultStr.split(',')[1];
-          const mimeType = file.type;
+          // Compress the image client-side to dramatically reduce payload size (<200KB), avoiding Vercel payload limits & timeout crashes
+          const compressedDataUrl = await compressImage(resultStr);
+          const base64Data = compressedDataUrl.split(',')[1];
+          const mimeType = "image/jpeg";
 
           const response = await fetch('/api/extract-players', {
             method: 'POST',
@@ -454,8 +492,10 @@ export default function PlayerManager({
                 <div className="p-2.5 rounded-xl bg-rose-950/15 border border-rose-500/25 text-[10.5px] text-rose-300 font-medium leading-relaxed">
                   ⚠️ {reclubUrlError}
                   {!useRawHtml && (
-                    <div className="mt-1.5 pt-1.5 border-t border-rose-500/10 text-[9.5px] text-rose-400">
-                      Tips: Server Reclub membatasi robot dari cloud hosting. Silakan coba klik tombol <b>"Gunakan Metode Paste HTML"</b> di atas untuk menyalin langsung data halaman permainan Anda!
+                    <div className="mt-2.5 pt-2 border-t border-rose-500/10 text-[9.5px] text-rose-400">
+                      <b>Mengapa ini terjadi?</b> Server Reclub diproteksi oleh <b>Cloudflare</b> yang memblokir semua request otomatis dari server cloud hosting (baik server AI Studio maupun deployment <b>Vercel</b> Anda).
+                      <br/><br/>
+                      <b>Solusi 100% Berhasil:</b> Silakan klik tombol kuning <span className="text-teal-400 font-bold hover:underline cursor-pointer" onClick={() => setUseRawHtml(true)}>"⚠️ Link Error? Gunakan Metode Paste HTML"</span> di atas! Cukup salin (Copy) kode sumber halaman Reclub Anda lalu tempel (Paste) di sini. Sangat mudah, instan, dan bebas blokir keamanan!
                     </div>
                   )}
                 </div>
