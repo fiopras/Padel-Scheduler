@@ -312,49 +312,152 @@ CRITICAL EXTRACTION RULES:
 
         console.log(`[Reclub Import] Fetching URL: ${targetUrl}`);
         
-        // Setup AbortController for an 8-second timeout to allow slow connections but prevent indefinite hangs
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        let success = false;
+        let lastErrorMsg = "";
 
-        try {
-          const response = await fetch(targetUrl, {
-            signal: controller.signal,
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-              'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            }
-          });
-
-          clearTimeout(timeoutId);
-
-          if (!response.ok) {
-            throw new Error(`Gagal mengambil data dari Reclub (HTTP ${response.status}). Batasan keamanan/Cloudflare dari server Reclub membatasi akses otomatis dari server luring.`);
-          }
-
-          html = await response.text();
-
-          // Update urlSlug if we were redirected to a full canonical/friendly URL (e.g. /m/event-slug-E93XSO)
-          if (response.url && response.url !== targetUrl) {
-            console.log(`[Reclub Import] Redirected to final URL: ${response.url}`);
-            try {
-              const finalUrlObj = new URL(response.url);
-              const pathParts = finalUrlObj.pathname.split('/').filter(Boolean);
-              if (pathParts.length > 0) {
-                const finalSlug = pathParts[pathParts.length - 1].toLowerCase().trim();
-                if (finalSlug) {
-                  urlSlug = finalSlug;
-                  console.log(`[Reclub Import] Updated urlSlug from final redirected URL: ${urlSlug}`);
+        const fetchStrategies = [
+          // 1. Direct Fetch with Browser User-Agent
+          {
+            name: "Direct Fetch",
+            fn: async () => {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 4000);
+              try {
+                const res = await fetch(targetUrl, {
+                  signal: controller.signal,
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                  }
+                });
+                clearTimeout(timeoutId);
+                if (!res.ok) {
+                  throw new Error(`HTTP Status ${res.status}`);
                 }
+                const body = await res.text();
+                return { html: body, url: res.url };
+              } catch (e) {
+                clearTimeout(timeoutId);
+                throw e;
               }
-            } catch (err) {}
+            }
+          },
+          // 2. CorsProxy.io Bypass
+          {
+            name: "CorsProxy.io",
+            fn: async () => {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 4500);
+              try {
+                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+                const res = await fetch(proxyUrl, {
+                  signal: controller.signal,
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                  }
+                });
+                clearTimeout(timeoutId);
+                if (!res.ok) {
+                  throw new Error(`Proxy HTTP Status ${res.status}`);
+                }
+                const body = await res.text();
+                if (body.includes("Cloudflare") && (body.includes("Access denied") || body.includes("security check"))) {
+                  throw new Error("Blocked by Cloudflare on proxy");
+                }
+                return { html: body, url: targetUrl };
+              } catch (e) {
+                clearTimeout(timeoutId);
+                throw e;
+              }
+            }
+          },
+          // 3. AllOrigins.win Bypass
+          {
+            name: "AllOrigins.win",
+            fn: async () => {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 4500);
+              try {
+                const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+                const res = await fetch(proxyUrl, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (!res.ok) {
+                  throw new Error(`Proxy HTTP Status ${res.status}`);
+                }
+                const json = await res.json() as any;
+                if (!json.contents) {
+                  throw new Error("Empty contents from AllOrigins");
+                }
+                return { html: json.contents, url: targetUrl };
+              } catch (e) {
+                clearTimeout(timeoutId);
+                throw e;
+              }
+            }
+          },
+          // 4. CodeTabs Proxy Bypass
+          {
+            name: "CodeTabs Proxy",
+            fn: async () => {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 4500);
+              try {
+                const proxyUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`;
+                const res = await fetch(proxyUrl, {
+                  signal: controller.signal,
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                  }
+                });
+                clearTimeout(timeoutId);
+                if (!res.ok) {
+                  throw new Error(`Proxy HTTP Status ${res.status}`);
+                }
+                const body = await res.text();
+                return { html: body, url: targetUrl };
+              } catch (e) {
+                clearTimeout(timeoutId);
+                throw e;
+              }
+            }
           }
-        } catch (fetchErr: any) {
-          clearTimeout(timeoutId);
-          if (fetchErr.name === 'AbortError') {
-            throw new Error("Koneksi langsung diblokir oleh sistem keamanan Cloudflare Reclub (Timeout). Silakan klik tombol 'Gunakan Metode Paste HTML' di bawah untuk mengekstrak data 100% instan tanpa hambatan server!");
+        ];
+
+        for (const strategy of fetchStrategies) {
+          try {
+            console.log(`[Reclub Import] Trying strategy: ${strategy.name}`);
+            const result = await strategy.fn();
+            if (result.html && result.html.trim().length > 100) {
+              html = result.html;
+              success = true;
+              console.log(`[Reclub Import] Successfully fetched HTML via: ${strategy.name}`);
+              
+              // Handle redirection detection for final urlSlug update
+              if (result.url && result.url !== targetUrl) {
+                console.log(`[Reclub Import] Redirected to final URL: ${result.url}`);
+                try {
+                  const finalUrlObj = new URL(result.url);
+                  const pathParts = finalUrlObj.pathname.split('/').filter(Boolean);
+                  if (pathParts.length > 0) {
+                    const finalSlug = pathParts[pathParts.length - 1].toLowerCase().trim();
+                    if (finalSlug) {
+                      urlSlug = finalSlug;
+                      console.log(`[Reclub Import] Updated urlSlug from final redirected URL: ${urlSlug}`);
+                    }
+                  }
+                } catch (err) {}
+              }
+              break;
+            }
+          } catch (err: any) {
+            console.warn(`[Reclub Import] Strategy ${strategy.name} failed:`, err?.message || err);
+            lastErrorMsg = err?.message || String(err);
           }
-          throw fetchErr;
+        }
+
+        if (!success) {
+          throw new Error(`Koneksi diblokir oleh Cloudflare Reclub (${lastErrorMsg || "Cloudflare block"}). Batasan keamanan Cloudflare memblokir akses langsung dari server cloud (baik Vercel maupun AI Studio). Silakan klik tombol kuning "⚠️ Link Error? Gunakan Metode Paste HTML" di atas untuk menyalin langsung data halaman permainan Anda!`);
         }
       }
 
