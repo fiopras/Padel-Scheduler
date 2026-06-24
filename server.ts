@@ -45,24 +45,23 @@ async function startServer() {
       const client = getGemini();
 
       // List of highly compatible models to try sequentially in case of 503/peak demand errors
-      const candidateModels = ["gemini-3.5-flash", "gemini-3.1-flash-lite"];
+      const candidateModels = ["gemini-3.5-flash", "gemini-2.5-flash", "gemini-3.1-flash-lite"];
       let lastError: any = null;
       let textResponse: string | null = null;
 
       for (const modelName of candidateModels) {
         try {
           console.log(`[AI Extraction] Attempting player extraction with model: ${modelName}`);
-          const apiResponse = await client.models.generateContent({
-            model: modelName,
-            contents: [
-              {
-                inlineData: {
-                  data: base64Data,
-                  mimeType: mimeType || "image/png"
-                }
-              },
-              {
-                text: `Analyze this image, which is a screenshot of the Reclub mobile app sports participants list.
+          
+          const imagePart = {
+            inlineData: {
+              data: base64Data,
+              mimeType: mimeType || "image/png"
+            }
+          };
+
+          const textPart = {
+            text: `Analyze this image, which is a screenshot of the Reclub mobile app sports participants list.
 
 CRITICAL EXTRACTION RULES:
 1. Find the header indicating the count of confirmed participants (e.g., "Dikonfirmasi • 12" or "Confirmed • 12" or "Going • 12"). This count represents the exact number of active players we want to extract.
@@ -72,8 +71,11 @@ CRITICAL EXTRACTION RULES:
 5. DO NOT extract names from any other sections (like waitlist, maybe, organizers, or past matches) if they exist.
 6. DO NOT invent, guess, or hallucinate names. The list must match the visual count (e.g., if the header says 12, there should be exactly 12 players extracted).
 7. For each player, determine or guess their gender (use "Laki-laki" for male or "Perempuan" for female). If the name is ambiguous, default to "Laki-laki".`
-              }
-            ],
+          };
+
+          const apiResponse = await client.models.generateContent({
+            model: modelName,
+            contents: { parts: [imagePart, textPart] },
             config: {
               responseMimeType: "application/json",
               responseSchema: {
