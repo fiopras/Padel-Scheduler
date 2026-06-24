@@ -45,7 +45,7 @@ async function startServer() {
       const client = getGemini();
 
       // List of highly compatible models to try sequentially in case of 503/peak demand errors
-      const candidateModels = ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-3.5-flash", "gemini-1.5-pro"];
+      const candidateModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
       let lastError: any = null;
       let textResponse: string | null = null;
 
@@ -62,12 +62,16 @@ async function startServer() {
                 }
               },
               {
-                text: `Analyze this image which is a screenshot from the Reclub mobile app showing a list of sports players/participants under a section like 'CONFIRMED' or 'REQUESTED'. 
-Extract all the unique, clean display names of the athletes/players shown (for example, names like: 'JayR', 'w. Adi', 'IBRA', 'Mas Rizal', 'Fio', 'Samy', 'Adhe Fitri', 'Ipank rafa', 'Fajar', 'Aziz', 'Firman', 'Haickal'). 
+                text: `Analyze this image, which is a screenshot of the Reclub mobile app sports participants list.
 
-Only extract active names of participants. Do NOT include numbers like count labels (e.g., '12/14' or '94'), status headers, time headers (e.g., '18.19', '7:00 PM'), utility icons, or standard system tags/subtitles like 'Friend' or 'Langkah'. 
-
-Make sure to clean the names, remove duplicate characters or trailing spaces, and infer their gender if their name suggests it (use "Laki-laki" which counts for males, or "Perempuan" for females). If you cannot guess with certainty, default the gender to "Laki-laki".`
+CRITICAL EXTRACTION RULES:
+1. Find the header indicating the count of confirmed participants (e.g., "Dikonfirmasi • 12" or "Confirmed • 12" or "Going • 12"). This count represents the exact number of active players we want to extract.
+2. Extract the exact count number as "confirmed_count". For example, if it says "Dikonfirmasi • 12", confirmed_count should be 12.
+3. Directly under that header, you will see a grid of circular player avatar bubbles. Directly beneath each avatar bubble is the display name of that player (written in blue/dark blue text, e.g., 'Irfan Pribadi', 'IBRA', 'Haickal', 'Fio', 'w. Adi', 'Mas Rizal', 'Bes', 'Ipank rafa', 'Fajar', 'JayR', 'Adi', 'Aziz').
+4. Extract ONLY these exact names that correspond to the active/confirmed player avatars in the grid.
+5. DO NOT extract names from any other sections (like waitlist, maybe, organizers, or past matches) if they exist.
+6. DO NOT invent, guess, or hallucinate names. The list must match the visual count (e.g., if the header says 12, there should be exactly 12 players extracted).
+7. For each player, determine or guess their gender (use "Laki-laki" for male or "Perempuan" for female). If the name is ambiguous, default to "Laki-laki".`
               }
             ],
             config: {
@@ -75,6 +79,7 @@ Make sure to clean the names, remove duplicate characters or trailing spaces, an
               responseSchema: {
                 type: Type.OBJECT,
                 properties: {
+                  confirmed_count: { type: Type.INTEGER, description: "The exact number from the header, e.g., 12" },
                   players: {
                     type: Type.ARRAY,
                     items: {
@@ -87,7 +92,7 @@ Make sure to clean the names, remove duplicate characters or trailing spaces, an
                     }
                   }
                 },
-                required: ["players"]
+                required: ["confirmed_count", "players"]
               }
             }
           });
@@ -95,6 +100,7 @@ Make sure to clean the names, remove duplicate characters or trailing spaces, an
           if (apiResponse && apiResponse.text) {
             textResponse = apiResponse.text;
             console.log(`[AI Extraction] Extraction Succeeded using model: ${modelName}`);
+            console.log(`[AI Extraction] Raw JSON Response:\n${textResponse}`);
             break; // Succeeded! Exit the loop.
           }
         } catch (err: any) {
@@ -108,8 +114,33 @@ Make sure to clean the names, remove duplicate characters or trailing spaces, an
         throw new Error(lastError?.message || "Semua model AI sedang sibuk. Silakan coba beberapa saat lagi.");
       }
 
+      // Parse and apply strict filters (confirmed_count slice, duplicate removal) on server-side
+      const parsed = JSON.parse(textResponse);
+      const rawPlayers = parsed.players || [];
+      const confirmedCount = parsed.confirmed_count || rawPlayers.length;
+
+      const seen = new Set<string>();
+      const uniquePlayers: any[] = [];
+      for (const p of rawPlayers) {
+        if (!p.name) continue;
+        const norm = p.name.trim().toLowerCase();
+        if (!seen.has(norm)) {
+          seen.add(norm);
+          uniquePlayers.push({
+            name: p.name.trim(),
+            gender: p.gender === "Perempuan" ? "Perempuan" : "Laki-laki"
+          });
+        }
+      }
+
+      let finalPlayers = uniquePlayers;
+      if (finalPlayers.length > confirmedCount) {
+        console.log(`[AI Extraction] Slicing players from ${finalPlayers.length} to ${confirmedCount} based on confirmed_count`);
+        finalPlayers = finalPlayers.slice(0, confirmedCount);
+      }
+
       res.setHeader("Content-Type", "application/json");
-      res.send(textResponse);
+      res.json({ players: finalPlayers });
     } catch (err: any) {
       console.error("AI player extraction completely failed:", err);
       res.status(500).json({ error: err?.message || "Gagal mengekstrak nama pemain karena lalu lintas server padat. Silakan coba kembali." });
@@ -128,11 +159,127 @@ Make sure to clean the names, remove duplicate characters or trailing spaces, an
       .replace(/&nbsp;/g, ' ');
   }
 
+  // Heuristic parser helper if Nuxt state is missing or the page format is modified/copied as text
+  function tryExtractPlayersHeuristically(input: string) {
+    const playersList: { id: string; username: string; name: string; gender: string; skillLevel: string }[] = [];
+    
+    // Strip HTML tags to extract clean text lines
+    const cleanText = input.replace(/<[^>]+>/g, '\n');
+    const lines = cleanText
+      .split('\n')
+      .map(l => l.trim())
+      .filter(l => l.length > 0);
+      
+    const blacklist = new Set([
+      'reclub', 'reclub.co', 'confirmed', 'going', 'participants', 'join', 'leave', 'invite',
+      'intermediate', 'advanced', 'beginner', 'laki-laki', 'perempuan', 'male', 'female',
+      'game', 'match', 'sport', 'tennis', 'badminton', 'racket', 'home', 'profile', 'settings',
+      'search', 'notifications', 'chat', 'feed', 'map', 'explore', 'create', 'event', 'events',
+      'upcoming', 'past', 'members', 'atlet', 'pemain', 'rincian', 'permainan', 'detail',
+      'batal', 'daftar', 'simpan', 'tambah', 'hapus', 'edit', 'logout', 'login', 'sign up',
+      'sign in', 'indonesia', 'jakarta', 'bandung', 'surabaya', 'medan', 'angkatan', 'keluar',
+      'masuk', 'unduh', 'upload', 'unggah', 'berkas', 'file', 'template', 'kembali', 'selanjutnya',
+      'sebelumnya', 'halaman', 'bantuan', 'kontak', 'tentang', 'kebijakan', 'privasi', 'syarat',
+      'ketentuan', 'hubungi', 'kami', 'hak', 'cipta', 'terpelihara', 'semua', 'populer', 'baru'
+    ]);
+
+    const seenNames = new Set<string>();
+    
+    // State to trace sections so we stop extracting once we leave the "Confirmed"/"Going" section
+    // and enter sections like "Waitlist", "Interested", "Invited", or "Past Matches"
+    let currentSection = 'confirmed';
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const lower = line.toLowerCase();
+      
+      // Section boundary detection:
+      // If we see waitlist, interested, maybe, cancelled, or invited, stop extraction of confirmed/going players.
+      if (
+        lower.includes('daftar tunggu') || 
+        lower.includes('waitlist') || 
+        lower.includes('interested') || 
+        lower.includes('maybe') || 
+        lower.includes('mungkin') || 
+        lower.includes('tidak hadir') || 
+        lower.includes('not going') || 
+        lower.includes('undangan') || 
+        lower.includes('invited') || 
+        lower.includes('belum respon') ||
+        lower.includes('batal') ||
+        lower.includes('declined')
+      ) {
+        currentSection = 'skipped';
+        console.log(`[Reclub Import] Heuristics: Hit stop section text "${line}". Skipping subsequent players.`);
+        continue;
+      }
+      
+      if (currentSection === 'skipped') {
+        continue;
+      }
+
+      // Ignore short lines, long lines, or numeric only
+      if (line.length < 2 || line.length > 40) continue;
+      if (/^[0-9\s\.\,\-\#\:\/\(\)]+$/.test(line)) continue;
+      
+      if (blacklist.has(lower)) continue;
+      if (lower.includes('reclub') || lower.includes('http') || lower.includes('.com') || lower.includes('.co')) continue;
+      if (['confirmed', 'going', 'maybe', 'not going', 'waitlist', 'organizer', 'host', 'admin', 'moderator'].includes(lower)) continue;
+      
+      let cleanedName = line.replace(/^\d+[\.\-\s)]+/, '').trim();
+      cleanedName = cleanedName.replace(/\(Confirmed\)/i, '').trim();
+      cleanedName = cleanedName.replace(/\(Going\)/i, '').trim();
+      cleanedName = cleanedName.replace(/\(Organizer\)/i, '').trim();
+      cleanedName = cleanedName.replace(/\(Host\)/i, '').trim();
+      cleanedName = cleanedName.replace(/[^a-zA-Z0-9\s\.\-\'\(\)]/g, '').trim();
+      
+      if (cleanedName.length < 2 || cleanedName.length > 40) continue;
+      if (blacklist.has(cleanedName.toLowerCase())) continue;
+      
+      let gender = 'Laki-laki';
+      let skillLevel = 'Intermediate';
+      
+      // Search adjacent lines for gender or skill cues
+      for (let j = 1; j <= 4; j++) {
+        if (i + j < lines.length) {
+          const nextLine = lines[i + j].toLowerCase();
+          if (nextLine.includes('perempuan') || nextLine.includes('female') || nextLine.includes('wanita') || nextLine === 'f' || nextLine === 'p') {
+            gender = 'Perempuan';
+          } else if (nextLine.includes('laki') || nextLine.includes('male') || nextLine.includes('pria') || nextLine === 'm' || nextLine === 'l') {
+            gender = 'Laki-laki';
+          }
+          
+          if (nextLine.includes('beginner') || nextLine.includes('pemula')) {
+            skillLevel = 'Beginner';
+          } else if (nextLine.includes('intermediate') || nextLine.includes('menengah')) {
+            skillLevel = 'Intermediate';
+          } else if (nextLine.includes('advanced') || nextLine.includes('mahir')) {
+            skillLevel = 'Advanced';
+          }
+        }
+      }
+      
+      const norm = cleanedName.toLowerCase();
+      if (!seenNames.has(norm)) {
+        seenNames.add(norm);
+        playersList.push({
+          id: `h_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+          username: cleanedName.toLowerCase().replace(/\s+/g, '_'),
+          name: cleanedName,
+          gender,
+          skillLevel
+        });
+      }
+    }
+    return playersList;
+  }
+
   // Server-side Reclub scrap-and-import API endpoint
   app.post("/api/import-reclub", async (req, res) => {
     try {
       const { url, rawHtml } = req.body;
       let html = "";
+      let urlSlug = "";
 
       if (rawHtml) {
         html = rawHtml;
@@ -152,11 +299,20 @@ Make sure to clean the names, remove duplicate characters or trailing spaces, an
           return res.status(400).json({ error: "URL harus berasal dari reclub.co" });
         }
 
+        try {
+          const parsedUrl = new URL(targetUrl);
+          const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
+          if (pathParts.length > 0) {
+            urlSlug = pathParts[pathParts.length - 1].toLowerCase().trim();
+            console.log(`[Reclub Import] Parsed urlSlug from target URL: ${urlSlug}`);
+          }
+        } catch (e) {}
+
         console.log(`[Reclub Import] Fetching URL: ${targetUrl}`);
         
-        // Setup AbortController for a fast 1.5-second timeout to fail-fast when blocked by Cloudflare (prevent long hangs)
+        // Setup AbortController for an 8-second timeout to allow slow connections but prevent indefinite hangs
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 1500);
+        const timeoutId = setTimeout(() => controller.abort(), 8000);
 
         try {
           const response = await fetch(targetUrl, {
@@ -175,6 +331,22 @@ Make sure to clean the names, remove duplicate characters or trailing spaces, an
           }
 
           html = await response.text();
+
+          // Update urlSlug if we were redirected to a full canonical/friendly URL (e.g. /m/event-slug-E93XSO)
+          if (response.url && response.url !== targetUrl) {
+            console.log(`[Reclub Import] Redirected to final URL: ${response.url}`);
+            try {
+              const finalUrlObj = new URL(response.url);
+              const pathParts = finalUrlObj.pathname.split('/').filter(Boolean);
+              if (pathParts.length > 0) {
+                const finalSlug = pathParts[pathParts.length - 1].toLowerCase().trim();
+                if (finalSlug) {
+                  urlSlug = finalSlug;
+                  console.log(`[Reclub Import] Updated urlSlug from final redirected URL: ${urlSlug}`);
+                }
+              }
+            } catch (err) {}
+          }
         } catch (fetchErr: any) {
           clearTimeout(timeoutId);
           if (fetchErr.name === 'AbortError') {
@@ -184,203 +356,424 @@ Make sure to clean the names, remove duplicate characters or trailing spaces, an
         }
       }
 
+      // Extract the confirmed/going count from the HTML if possible as a safeguard
+      let confirmedCount: number | null = null;
+      // Strip HTML tags so regex matches even if separated by tags like <span>Dikonfirmasi</span> • <span>12</span>
+      const strippedHtmlForCount = html.replace(/<[^>]+>/g, ' ');
+      const confirmedMatch = strippedHtmlForCount.match(/(?:Dikonfirmasi|Confirmed|Going|Hadir|Ikut)\s*[\s•·\.\-\:\(\[|*]+\s*(\d+)/i) || 
+                             strippedHtmlForCount.match(/(?:Dikonfirmasi|Confirmed|Going|Hadir|Ikut)\s*\(\s*(\d+)\s*\)/i);
+      if (confirmedMatch) {
+        const val = parseInt(confirmedMatch[1], 10);
+        if (!isNaN(val) && val > 0) {
+          confirmedCount = val;
+          console.log(`[Reclub Import] Text-stripped Regex detected confirmed count: ${confirmedCount}`);
+        }
+      }
+
+      // Try to extract the HTML Page Title or og:title as a matching guide
+      let htmlTitle = "";
+      if (html) {
+        const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        if (titleMatch) {
+          htmlTitle = decodeHTMLEntities(titleMatch[1].trim());
+        }
+        const ogTitleMatch = html.match(/<meta[^>]*property="og:title"[^>]*content="([^"]+)"/i);
+        if (ogTitleMatch) {
+          htmlTitle = decodeHTMLEntities(ogTitleMatch[1].trim());
+        }
+        console.log(`[Reclub Import] Extracted htmlTitle for scoring: "${htmlTitle}"`);
+      }
+
+      // If urlSlug is not found yet, try extracting from HTML (e.g. from canonical URL, og:url meta tags, or any Reclub meet link)
+      if (!urlSlug && html) {
+        const ogUrlMatch = html.match(/<meta[^>]*property="og:url"[^>]*content="([^"]+)"/i) ||
+                           html.match(/<link[^>]*rel="canonical"[^>]*href="([^"]+)"/i);
+        if (ogUrlMatch) {
+          try {
+            const parsedUrl = new URL(ogUrlMatch[1]);
+            const pathParts = parsedUrl.pathname.split('/').filter(Boolean);
+            if (pathParts.length > 0) {
+              urlSlug = pathParts[pathParts.length - 1].toLowerCase().trim();
+              console.log(`[Reclub Import] Extracted urlSlug from HTML og:url/canonical: ${urlSlug}`);
+            }
+          } catch (e) {}
+        }
+
+        // Broad scan fallback: look for reclub.co/id/m/... or simply /m/SLUG inside HTML links or JSON values
+        if (!urlSlug) {
+          const mMatch = html.match(/reclub\.co\/(?:[a-z]{2}\/)?m\/([a-zA-Z0-9_-]+)/i) ||
+                         html.match(/\/m\/([a-zA-Z0-9_-]+)/i);
+          if (mMatch) {
+            urlSlug = mMatch[1].toLowerCase().trim();
+            console.log(`[Reclub Import] Broad regex extracted urlSlug from HTML links: ${urlSlug}`);
+          }
+        }
+      }
+
       // Search for <script id="__NUXT_DATA__">
       let match = html.match(/<script[^>]*id="__NUXT_DATA__"[^>]*>([\s\S]*?)<\/script>/i);
       let rawJson = "";
-      if (match) {
-        rawJson = decodeHTMLEntities(match[1].trim());
-      } else {
-        const cleanHtml = html.trim();
-        if (cleanHtml.startsWith('[') && cleanHtml.endsWith(']')) {
-          rawJson = cleanHtml;
-        } else {
-          throw new Error("Gagal menemukan struktur roster atlet (__NUXT_DATA__) dari input yang Anda masukkan. Pastikan Anda menyalin data HTML halaman pertandingan seutuhnya.");
-        }
-      }
+      let playersList: any[] = [];
+      let eventName = "Roster Hasil Ekstraksi";
+      let venue = "Reclub";
+      let parsedSuccessfully = false;
 
-      const parsedArray = JSON.parse(rawJson);
-
-      if (!Array.isArray(parsedArray)) {
-        throw new Error("Format data __NUXT_DATA__ tidak valid (bukan array).");
-      }
-
-      // Unflatten the Nuxt data array
-      const length = parsedArray.length;
-      const hydrated = new Array(length);
-
-      function walk(index: number, visited = new Set<number>()): any {
-        if (index === -1) return undefined;
-        if (index < 0 || index >= length) return undefined;
-        if (index in hydrated) return hydrated[index];
-        if (visited.has(index)) return undefined; // circular ref block
-
-        visited.add(index);
-        const value = parsedArray[index];
-
-        if (value === null || typeof value === 'undefined') {
-          hydrated[index] = value;
-          return value;
-        }
-
-        if (typeof value !== 'object') {
-          hydrated[index] = value;
-          return value;
-        }
-
-        // Check if it's a wrapper array (like Vue Reactive/Ref wrapper)
-        if (Array.isArray(value)) {
-          if (value.length === 2 && typeof value[0] === 'string' && ['Reactive', 'ShallowReactive', 'Ref', 'ShallowRef'].includes(value[0])) {
-            const unwrapped = walk(value[1], visited);
-            hydrated[index] = unwrapped;
-            return unwrapped;
+      if (match || (html.trim().startsWith('[') && html.trim().endsWith(']'))) {
+        try {
+          if (match) {
+            rawJson = decodeHTMLEntities(match[1].trim());
+          } else {
+            rawJson = html.trim();
           }
 
-          const arr: any[] = [];
-          hydrated[index] = arr;
-          for (const item of value) {
-            arr.push(typeof item === 'number' && item >= 0 && item < length ? walk(item, new Set(visited)) : item);
-          }
-          return arr;
-        }
+          const parsedArray = JSON.parse(rawJson);
 
-        // Object
-        const obj: Record<string, any> = {};
-        hydrated[index] = obj;
-        for (const key of Object.keys(value)) {
-          const val = value[key];
-          obj[key] = (typeof val === 'number' && val >= 0 && val < length) ? walk(val, new Set(visited)) : val;
-        }
-        return obj;
-      }
+          if (Array.isArray(parsedArray)) {
+            // Unflatten the Nuxt data array
+            const length = parsedArray.length;
+            const hydrated = new Array(length);
 
-      // Walk all indices to hydrate
-      for (let i = 0; i < length; i++) {
-        walk(i);
-      }
+            const walk = (index: number, visited = new Set<number>()): any => {
+              if (index === -1) return undefined;
+              if (index < 0 || index >= length) return undefined;
+              if (index in hydrated) return hydrated[index];
+              if (visited.has(index)) return undefined; // circular ref block
 
-      // Find the meet details and usersMap tree
-      let foundMeet: any = null;
-      let foundUsersMap: any = null;
+              visited.add(index);
+              const value = parsedArray[index];
 
-      for (const item of hydrated) {
-        if (!item || typeof item !== 'object') continue;
-
-        // Form A: Sibling relation (wrapper has 'meet' and 'usersMap')
-        if (item.meet && typeof item.meet === 'object' && item.usersMap && typeof item.usersMap === 'object') {
-          foundMeet = item.meet;
-          foundUsersMap = item.usersMap;
-          break;
-        }
-
-        // Form B: Single relation (item has BOTH 'participants' and 'usersMap')
-        if (item.participants && Array.isArray(item.participants) && item.usersMap && typeof item.usersMap === 'object') {
-          foundMeet = item;
-          foundUsersMap = item.usersMap;
-          break;
-        }
-      }
-
-      // Helper fallback deep scan
-      if (!foundMeet || !foundUsersMap) {
-        for (const item of hydrated) {
-          if (!item || typeof item !== 'object') continue;
-          for (const key of Object.keys(item)) {
-            const sub = item[key];
-            if (sub && typeof sub === 'object') {
-              if (sub.meet && typeof sub.meet === 'object' && sub.usersMap && typeof sub.usersMap === 'object') {
-                foundMeet = sub.meet;
-                foundUsersMap = sub.usersMap;
-                break;
+              if (value === null || typeof value === 'undefined') {
+                hydrated[index] = value;
+                return value;
               }
-              if (sub.participants && Array.isArray(sub.participants) && sub.usersMap && typeof sub.usersMap === 'object') {
-                foundMeet = sub;
-                foundUsersMap = sub.usersMap;
-                break;
+
+              if (typeof value !== 'object') {
+                hydrated[index] = value;
+                return value;
               }
-            }
-          }
-          if (foundMeet && foundUsersMap) break;
-        }
-      }
 
-      // Absolute fallback if they are entirely separate in state
-      if (!foundMeet || !foundUsersMap) {
-        let potentialUsersMap: any = null;
-        let potentialMeet: any = null;
-        for (const item of hydrated) {
-          if (!item || typeof item !== 'object') continue;
-          if (!potentialUsersMap && item.usersMap && typeof item.usersMap === 'object') {
-            potentialUsersMap = item.usersMap;
-          }
-          if (!potentialMeet && item.participants && Array.isArray(item.participants)) {
-            potentialMeet = item;
-          }
-        }
-        if (potentialMeet && potentialUsersMap) {
-          foundMeet = potentialMeet;
-          foundUsersMap = potentialUsersMap;
-        }
-      }
+              // Check if it's a wrapper array (like Vue Reactive/Ref wrapper)
+              if (Array.isArray(value)) {
+                if (value.length === 2 && typeof value[0] === 'string' && ['Reactive', 'ShallowReactive', 'Ref', 'ShallowRef'].includes(value[0])) {
+                  const unwrapped = walk(value[1], visited);
+                  hydrated[index] = unwrapped;
+                  return unwrapped;
+                }
 
-      if (!foundMeet || !foundUsersMap) {
-        throw new Error("Gagal menemukan details pertandingan atau roster pemain ('meet'/'usersMap') di dalam data Reclub.");
-      }
+                const arr: any[] = [];
+                hydrated[index] = arr;
+                for (const item of value) {
+                  arr.push(typeof item === 'number' && item >= 0 && item < length ? walk(item, new Set(visited)) : item);
+                }
+                return arr;
+              }
 
-      const eventName = foundMeet.name || "Pertandingan Reclub";
-      let venue = "Venue Reclub";
-      if (foundMeet.venue) {
-        venue = foundMeet.venue.name || foundMeet.venue || venue;
-      } else if (foundMeet.location) {
-        venue = foundMeet.location.name || foundMeet.location || venue;
-      }
+              // Object
+              const obj: Record<string, any> = {};
+              hydrated[index] = obj;
+              for (const key of Object.keys(value)) {
+                const val = value[key];
+                obj[key] = (typeof val === 'number' && val >= 0 && val < length) ? walk(val, new Set(visited)) : val;
+              }
+              return obj;
+            };
 
-      const players: { id: string; username: string; name: string; gender: string; skillLevel: string }[] = [];
-
-      if (foundMeet.participants && Array.isArray(foundMeet.participants)) {
-        for (const part of foundMeet.participants) {
-          if (!part || typeof part !== 'object') continue;
-
-          const refId = part.referenceId || part.userId || part.id || part.memberId;
-          if (!refId) continue;
-
-          const userData = foundUsersMap[refId] || foundUsersMap[String(refId)];
-          if (userData) {
-            const username = userData.username || userData.userName || userData.handle || "";
-            const firstName = userData.firstName || "";
-            const lastName = userData.lastName || "";
-            let name = userData.name || userData.displayName || userData.fullName || "";
-            if (!name && (firstName || lastName)) {
-              name = `${firstName} ${lastName}`.trim();
+            // Walk all indices to hydrate
+            for (let i = 0; i < length; i++) {
+              walk(i);
             }
 
-            // Detect gender
-            let gender = "Laki-laki";
-            const g = userData.gender || userData.Gender || "";
-            if (typeof g === 'string') {
-              if (g === 'F' || g === 'Female' || g.toLowerCase().startsWith('p') || g.toLowerCase() === 'f') {
-                gender = "Perempuan";
+            // Build a unified users map from all objects in hydrated to maximize profile resolution
+            const unifiedUsersMap: Record<string, any> = {};
+            for (const item of hydrated) {
+              if (!item || typeof item !== 'object') continue;
+
+              // If it's a single user profile
+              const possibleId = item.id || item.userId || item.uid || item.referenceId || item.memberId;
+              const hasName = item.name || item.username || item.firstName || item.fullName || item.displayName;
+              if (possibleId && hasName && !Array.isArray(item)) {
+                unifiedUsersMap[String(possibleId)] = item;
+              }
+
+              // If it's a map/dictionary of users
+              for (const key of Object.keys(item)) {
+                const val = item[key];
+                if (val && typeof val === 'object' && !Array.isArray(val)) {
+                  const hasSubName = val.name || val.username || val.firstName || val.fullName || val.displayName;
+                  if (hasSubName) {
+                    unifiedUsersMap[String(key)] = val;
+                    const subId = val.id || val.userId || val.uid || val.referenceId || val.memberId;
+                    if (subId) {
+                      unifiedUsersMap[String(subId)] = val;
+                    }
+                  }
+                }
               }
             }
 
-            // Customize skill level placeholder
-            let skillLevel = "Intermediate";
+            console.log(`[Reclub Import] Compiled unifiedUsersMap with ${Object.keys(unifiedUsersMap).length} profiles.`);
 
-            players.push({
-              id: String(refId),
-              username: String(username),
-              name: String(name || username || "Tanpa Nama"),
-              gender,
-              skillLevel
-            });
+            // Identify all potential meet/event candidate objects in hydrated state
+            const meetCandidates: any[] = [];
+            for (const item of hydrated) {
+              if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+
+              const hasParticipants = (item.participants && Array.isArray(item.participants)) ||
+                                      (item.members && Array.isArray(item.members)) ||
+                                      (item.users && Array.isArray(item.users)) ||
+                                      (item.attendees && Array.isArray(item.attendees));
+
+              if (hasParticipants || item.sport || item.venue || item.location || item.meetCode) {
+                meetCandidates.push(item);
+              }
+            }
+
+            // Score candidate meets to find the primary/active one
+            const scoredMeets: { meet: any; score: number }[] = [];
+            for (const meet of meetCandidates) {
+              let score = 0;
+              const participants = meet.participants || meet.members || meet.users || meet.attendees || [];
+              const pCount = participants.length;
+              score += pCount * 15; // Higher participant count indicates active roster page
+
+              const meetSlug = String(meet.slug || "").toLowerCase().trim();
+              const meetId = String(meet.id || "").toLowerCase().trim();
+              const meetCode = String(meet.code || meet.shortCode || meet.short_code || meet.meetCode || meet.meet_code || "").toLowerCase().trim();
+              const meetName = String(meet.name || "").toLowerCase().trim();
+              const normalizedName = meetName.replace(/[^a-z0-9]+/g, '-');
+
+              if (urlSlug) {
+                const cleanUrlSlug = urlSlug.toLowerCase().trim();
+                if (meetCode === cleanUrlSlug || meetId === cleanUrlSlug || meetSlug === cleanUrlSlug) {
+                  score += 100000; // Exact match on code, id, or slug is the absolute correct match
+                } else if (
+                  (meetCode && (cleanUrlSlug.includes(meetCode) || meetCode.includes(cleanUrlSlug))) ||
+                  (meetId && (cleanUrlSlug.includes(meetId) || meetId.includes(cleanUrlSlug))) ||
+                  (meetSlug && (cleanUrlSlug.includes(meetSlug) || meetSlug.includes(cleanUrlSlug)))
+                ) {
+                  score += 50000;
+                }
+
+                if (normalizedName === cleanUrlSlug) {
+                  score += 60000;
+                } else if (cleanUrlSlug.includes(normalizedName) || normalizedName.includes(cleanUrlSlug)) {
+                  score += 30000;
+                }
+              }
+
+              // Match against htmlTitle
+              if (htmlTitle && meetName) {
+                const normTitle = htmlTitle.toLowerCase();
+                const normMeetName = meetName.toLowerCase();
+                if (normTitle.includes(normMeetName) || normMeetName.includes(normTitle)) {
+                  score += 40000;
+                }
+              }
+
+              scoredMeets.push({ meet, score });
+            }
+
+            scoredMeets.sort((a, b) => b.score - a.score);
+            const foundMeet = scoredMeets.length > 0 ? scoredMeets[0].meet : null;
+
+            if (foundMeet) {
+              console.log(`[Reclub Import] Selected best meet: "${foundMeet.name || 'Unnamed'}" with score ${scoredMeets[0].score}`);
+              eventName = foundMeet.name || "Pertandingan Reclub";
+              if (foundMeet.venue) {
+                venue = foundMeet.venue.name || foundMeet.venue || venue;
+              } else if (foundMeet.location) {
+                venue = foundMeet.location.name || foundMeet.location || venue;
+              }
+
+              // Try to find the confirmed/going count inside foundMeet properties
+              const possibleCountKeys = ['goingCount', 'going_count', 'confirmedCount', 'confirmed_count', 'spotsFilled', 'spots_filled', 'going'];
+              for (const key of possibleCountKeys) {
+                const val = foundMeet[key];
+                if (val !== undefined && val !== null) {
+                  const numVal = parseInt(val, 10);
+                  if (!isNaN(numVal) && numVal > 0) {
+                    if (confirmedCount === null) {
+                      confirmedCount = numVal;
+                      console.log(`[Reclub Import] Found confirmed count in meet.${key}: ${confirmedCount}`);
+                    }
+                    break;
+                  }
+                }
+              }
+
+              const participants = foundMeet.participants || foundMeet.members || foundMeet.users || foundMeet.attendees || [];
+              
+              for (const part of participants) {
+                if (!part) continue;
+
+                let refId = null;
+                let userData = null;
+
+                if (typeof part === 'object') {
+                  refId = part.referenceId || part.userId || part.id || part.memberId || part.uid;
+                  // Some participant objects contain the full user object inside them under 'user' or 'profile' key
+                  userData = part.user || part.profile || part.member || part.userData;
+                } else if (typeof part === 'string' || typeof part === 'number') {
+                  refId = String(part);
+                }
+
+                if (!userData && refId) {
+                  userData = unifiedUsersMap[String(refId)];
+                }
+
+                // Check and filter by participant status.
+                // Reclub Nuxt payload represents status numerically:
+                // 1 = Going / Confirmed
+                // 2 = Maybe / Interested
+                // 3 = Invited / Pending
+                // 4 = Waitlisted / Queue
+                // 5 = Declined / Not Going
+                // -1 = Cancelled / Left
+                let partStatus = "";
+                if (part && typeof part === 'object') {
+                  partStatus = String(part.status || part.state || part.registrationStatus || part.registrationState || "").trim().toLowerCase();
+                }
+
+                const isNumeric = /^-?\d+$/.test(partStatus);
+                if (isNumeric) {
+                  // Only status '1' indicates a confirmed / going player. Skip others (waitlist, maybe, cancelled, declined)
+                  if (partStatus !== "1") {
+                    console.log(`[Reclub Import] Nuxt: Skipping participant ${refId || 'unknown'} because numeric status is "${partStatus}" (not 1 / Going)`);
+                    continue;
+                  }
+                } else if (partStatus) {
+                  // Fallback for string status
+                  if (['waitlist', 'waiting', 'maybe', 'interested', 'not_going', 'cancelled', 'declined', 'invited', 'pending'].includes(partStatus)) {
+                    console.log(`[Reclub Import] Nuxt: Skipping participant ${refId || 'unknown'} because status is "${partStatus}"`);
+                    continue;
+                  }
+                }
+
+                // If we found the user data, extract details
+                if (userData && typeof userData === 'object') {
+                  const username = userData.username || userData.userName || userData.handle || "";
+                  const firstName = userData.firstName || "";
+                  const lastName = userData.lastName || "";
+                  let name = userData.name || userData.displayName || userData.fullName || "";
+                  if (!name && (firstName || lastName)) {
+                    name = `${firstName} ${lastName}`.trim();
+                  }
+
+                  // Detect gender
+                  let gender = "Laki-laki";
+                  const g = userData.gender || userData.Gender || "";
+                  if (typeof g === 'string') {
+                    if (g === 'F' || g === 'Female' || g.toLowerCase().startsWith('p') || g.toLowerCase() === 'f') {
+                      gender = "Perempuan";
+                    }
+                  }
+
+                  // Detect level
+                  let skillLevel = "Intermediate";
+                  const l = userData.skillLevel || userData.level || userData.Level || "";
+                  if (typeof l === 'string') {
+                    const levelLower = l.toLowerCase();
+                    if (levelLower.includes('begin') || levelLower.includes('pemula') || levelLower.includes('dasar')) {
+                      skillLevel = "Beginner";
+                    } else if (levelLower.includes('inter') || levelLower.includes('menengah')) {
+                      skillLevel = "Intermediate";
+                    } else if (levelLower.includes('adv') || levelLower.includes('mahir') || levelLower.includes('expert')) {
+                      skillLevel = "Advanced";
+                    }
+                  }
+
+                  if (name) {
+                    const pId = refId || userData.id || userData.userId || name;
+                    if (!playersList.some(p => p.name.toLowerCase() === name.toLowerCase() || p.id === String(pId))) {
+                      playersList.push({ id: String(pId), username, name, gender, skillLevel });
+                    }
+                  }
+                } else if (part && typeof part === 'object' && (part.name || part.displayName)) {
+                  // Direct participant name (e.g. if the participant is just a simple object with name)
+                  const name = part.name || part.displayName;
+                  const username = part.username || "";
+                  let gender = "Laki-laki";
+                  let skillLevel = "Intermediate";
+                  const pId = part.id || name;
+                  if (!playersList.some(p => p.name.toLowerCase() === name.toLowerCase() || p.id === String(pId))) {
+                    playersList.push({ id: String(pId), username, name, gender, skillLevel });
+                  }
+                }
+              }
+
+              parsedSuccessfully = playersList.length > 0;
+            }
+
+            // Fallback scan of hydrated array if no players found
+            if (playersList.length === 0) {
+              console.log("[Reclub Import] No players found via bestMeet, executing broad payload array scan...");
+              for (const item of hydrated) {
+                if (Array.isArray(item)) {
+                  for (const sub of item) {
+                    if (!sub || typeof sub !== 'object') continue;
+                    const name = sub.name || sub.displayName || sub.fullName || (sub.firstName ? `${sub.firstName} ${sub.lastName || ''}`.trim() : "");
+                    if (name) {
+                      const pId = sub.id || sub.userId || sub.referenceId || name;
+                      if (!playersList.some(p => p.name.toLowerCase() === name.toLowerCase() || p.id === String(pId))) {
+                        playersList.push({
+                          id: String(pId),
+                          username: sub.username || "",
+                          name,
+                          gender: "Laki-laki",
+                          skillLevel: "Intermediate"
+                        });
+                      }
+                    }
+                  }
+                }
+              }
+              if (playersList.length > 0) {
+                parsedSuccessfully = true;
+              }
+            }
           }
+        } catch (err) {
+          console.warn("[Reclub Import] Nuxt parsing failed, falling back to heuristic parsing:", err);
         }
       }
 
-      console.log(`[Reclub Import] Extracted ${players.length} players from "${eventName}" at "${venue}"`);
+      if (!parsedSuccessfully) {
+        console.log("[Reclub Import] Parsing via heuristic text extractor...");
+        const extracted = tryExtractPlayersHeuristically(html);
+        if (extracted && extracted.length > 0) {
+          playersList = extracted;
+          parsedSuccessfully = true;
+        }
+      }
+
+      if (!parsedSuccessfully || playersList.length === 0) {
+        throw new Error("Gagal menemukan data atlet dari input yang Anda masukkan. Pastikan Anda menyalin kode sumber (View Source) atau seluruh teks halaman daftar peserta Reclub dengan benar.");
+      }
+
+      // De-duplicate extracted players list
+      const seen = new Set<string>();
+      const uniquePlayers: any[] = [];
+      for (const p of playersList) {
+        if (!p.name) continue;
+        const norm = p.name.trim().toLowerCase();
+        if (!seen.has(norm)) {
+          seen.add(norm);
+          uniquePlayers.push(p);
+        }
+      }
+      playersList = uniquePlayers;
+
+      // Slice the playersList to confirmedCount if it's found/extracted
+      if (confirmedCount !== null && playersList.length > confirmedCount) {
+        console.log(`[Reclub Import] Slicing playersList from ${playersList.length} to ${confirmedCount} based on confirmedCount (${confirmedCount})`);
+        playersList = playersList.slice(0, confirmedCount);
+      }
+
+      console.log(`[Reclub Import] Successfully extracted ${playersList.length} players from "${eventName}"`);
       res.json({
         eventName,
         venue,
-        players
+        players: playersList
       });
 
     } catch (err: any) {
