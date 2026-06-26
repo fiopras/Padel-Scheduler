@@ -323,12 +323,41 @@ CRITICAL EXTRACTION RULES:
         let lastErrorMsg = "";
 
         const fetchStrategies = [
-          // 1. Direct Fetch with Browser User-Agent
+          // 1. Google Focus Proxy (Extremely reliable bypass via Google crawler IPs)
+          {
+            name: "Google Focus Proxy",
+            fn: async () => {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 3500);
+              try {
+                // Append small cache buster param to targetUrl to ensure fresh fetch
+                const cbUrl = targetUrl + (targetUrl.includes('?') ? '&' : '?') + `_cb=${Date.now()}`;
+                const proxyUrl = `https://images-focus-opensocial.googleusercontent.com/gadgets/proxy?container=focus&refresh=1&url=${encodeURIComponent(cbUrl)}`;
+                const res = await fetch(proxyUrl, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (!res.ok) {
+                  throw new Error(`Google Proxy HTTP Status ${res.status}`);
+                }
+                const body = await res.text();
+                if (!body || body.trim().length < 200) {
+                  throw new Error("Returned payload too short or empty");
+                }
+                if (body.includes("Cloudflare") && (body.includes("Access denied") || body.includes("security check"))) {
+                  throw new Error("Blocked by Cloudflare on Google proxy");
+                }
+                return { html: body, url: targetUrl };
+              } catch (e) {
+                clearTimeout(timeoutId);
+                throw e;
+              }
+            }
+          },
+          // 2. Direct Fetch with Browser User-Agent
           {
             name: "Direct Fetch",
             fn: async () => {
               const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 2500);
+              const timeoutId = setTimeout(() => controller.abort(), 3000);
               try {
                 const res = await fetch(targetUrl, {
                   signal: controller.signal,
@@ -350,12 +379,12 @@ CRITICAL EXTRACTION RULES:
               }
             }
           },
-          // 2. CorsProxy.io Bypass
+          // 3. CorsProxy.io Bypass
           {
             name: "CorsProxy.io",
             fn: async () => {
               const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 2500);
+              const timeoutId = setTimeout(() => controller.abort(), 3000);
               try {
                 const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
                 const res = await fetch(proxyUrl, {
@@ -379,12 +408,12 @@ CRITICAL EXTRACTION RULES:
               }
             }
           },
-          // 3. AllOrigins.win Bypass
+          // 4. AllOrigins.win Bypass
           {
             name: "AllOrigins.win",
             fn: async () => {
               const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 2500);
+              const timeoutId = setTimeout(() => controller.abort(), 3000);
               try {
                 const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
                 const res = await fetch(proxyUrl, { signal: controller.signal });
@@ -403,12 +432,12 @@ CRITICAL EXTRACTION RULES:
               }
             }
           },
-          // 4. CodeTabs Proxy Bypass
+          // 5. CodeTabs Proxy Bypass
           {
             name: "CodeTabs Proxy",
             fn: async () => {
               const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 2500);
+              const timeoutId = setTimeout(() => controller.abort(), 3000);
               try {
                 const proxyUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`;
                 const res = await fetch(proxyUrl, {
@@ -431,40 +460,50 @@ CRITICAL EXTRACTION RULES:
           }
         ];
 
-        for (const strategy of fetchStrategies) {
+        // Run all strategies concurrently for maximum speed and fallback capability.
+        // Promise.any resolves with the fastest successful strategy, and fails if all fail.
+        const strategyPromises = fetchStrategies.map(async (strategy) => {
           try {
-            console.log(`[Reclub Import] Trying strategy: ${strategy.name}`);
+            console.log(`[Reclub Import] Triggered parallel strategy: ${strategy.name}`);
             const result = await strategy.fn();
             if (result.html && result.html.trim().length > 100) {
-              html = result.html;
-              success = true;
-              console.log(`[Reclub Import] Successfully fetched HTML via: ${strategy.name}`);
-              
-              // Handle redirection detection for final urlSlug update
-              if (result.url && result.url !== targetUrl) {
-                console.log(`[Reclub Import] Redirected to final URL: ${result.url}`);
-                try {
-                  const finalUrlObj = new URL(result.url);
-                  const pathParts = finalUrlObj.pathname.split('/').filter(Boolean);
-                  if (pathParts.length > 0) {
-                    const finalSlug = pathParts[pathParts.length - 1].toLowerCase().trim();
-                    if (finalSlug) {
-                      urlSlug = finalSlug;
-                      console.log(`[Reclub Import] Updated urlSlug from final redirected URL: ${urlSlug}`);
-                    }
-                  }
-                } catch (err) {}
-              }
-              break;
+              console.log(`[Reclub Import] Strategy succeeded first: ${strategy.name}`);
+              return result;
             }
+            throw new Error(`Strategy ${strategy.name} returned empty or invalid content`);
           } catch (err: any) {
-            console.warn(`[Reclub Import] Strategy ${strategy.name} failed:`, err?.message || err);
-            lastErrorMsg = err?.message || String(err);
+            console.warn(`[Reclub Import] Parallel strategy failed: ${strategy.name} (${err?.message || err})`);
+            throw err;
           }
+        });
+
+        try {
+          const result = await Promise.any(strategyPromises);
+          html = result.html;
+          success = true;
+
+          // Handle redirection detection for final urlSlug update
+          if (result.url && result.url !== targetUrl) {
+            console.log(`[Reclub Import] Redirected to final URL: ${result.url}`);
+            try {
+              const finalUrlObj = new URL(result.url);
+              const pathParts = finalUrlObj.pathname.split('/').filter(Boolean);
+              if (pathParts.length > 0) {
+                const finalSlug = pathParts[pathParts.length - 1].toLowerCase().trim();
+                if (finalSlug) {
+                  urlSlug = finalSlug;
+                  console.log(`[Reclub Import] Updated urlSlug from final redirected URL: ${urlSlug}`);
+                }
+              }
+            } catch (err) {}
+          }
+        } catch (aggregateError: any) {
+          console.error("[Reclub Import] All concurrent strategies failed:", aggregateError);
+          lastErrorMsg = "Semua proxy / link bypass gagal merespon atau diblokir oleh Cloudflare.";
         }
 
         if (!success) {
-          throw new Error(`Koneksi diblokir oleh Cloudflare Reclub (${lastErrorMsg || "Cloudflare block"}). Batasan keamanan Cloudflare memblokir akses langsung dari server cloud (baik Vercel maupun AI Studio). Silakan klik tombol kuning "⚠️ Link Error? Gunakan Metode Paste HTML" di atas untuk menyalin langsung data halaman permainan Anda!`);
+          throw new Error(`Koneksi diblokir oleh Cloudflare Reclub (${lastErrorMsg}). Batasan keamanan Cloudflare memblokir akses langsung dari server cloud (baik Vercel maupun AI Studio). Silakan klik tombol kuning "⚠️ Link Error? Gunakan Metode Paste HTML" di atas untuk menyalin langsung data halaman permainan Anda!`);
         }
       }
 

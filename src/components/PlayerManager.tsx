@@ -46,7 +46,34 @@ const fetchReclubHtmlClientSide = async (url: string): Promise<string> => {
   }
 
   const clientStrategies = [
-    // 1. AllOrigins Proxy (JSONP/CORS wrapper)
+    // 1. Google Focus Proxy (Extremely reliable bypass via Google crawler IPs)
+    {
+      name: "Google Focus Proxy",
+      fn: async () => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
+        try {
+          const cbUrl = targetUrl + (targetUrl.includes('?') ? '&' : '?') + `_cb=${Date.now()}`;
+          const res = await fetch(`https://images-focus-opensocial.googleusercontent.com/gadgets/proxy?container=focus&refresh=1&url=${encodeURIComponent(cbUrl)}`, {
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const text = await res.text();
+          if (!text || text.trim().length < 200) {
+            throw new Error("Empty or invalid content from Google Focus");
+          }
+          if (text.includes("Cloudflare") && (text.includes("Access denied") || text.includes("security check"))) {
+            throw new Error("Blocked by Cloudflare on Google proxy");
+          }
+          return text;
+        } catch (e) {
+          clearTimeout(timeoutId);
+          throw e;
+        }
+      }
+    },
+    // 2. AllOrigins Proxy (JSONP/CORS wrapper)
     {
       name: "AllOrigins Proxy",
       fn: async () => {
@@ -69,7 +96,7 @@ const fetchReclubHtmlClientSide = async (url: string): Promise<string> => {
         }
       }
     },
-    // 2. CorsProxy.io Proxy
+    // 3. CorsProxy.io Proxy
     {
       name: "CorsProxy.io",
       fn: async () => {
@@ -92,7 +119,7 @@ const fetchReclubHtmlClientSide = async (url: string): Promise<string> => {
         }
       }
     },
-    // 3. CodeTabs Proxy
+    // 4. CodeTabs Proxy
     {
       name: "CodeTabs Proxy",
       fn: async () => {
@@ -113,20 +140,29 @@ const fetchReclubHtmlClientSide = async (url: string): Promise<string> => {
     }
   ];
 
-  for (const strategy of clientStrategies) {
+  // Map each strategy to a self-contained promise and run them in parallel
+  const strategyPromises = clientStrategies.map(async (strategy) => {
     try {
-      console.log(`[Client-Side Import] Trying proxy strategy: ${strategy.name}`);
+      console.log(`[Client-Side Import] Triggered parallel strategy: ${strategy.name}`);
       const html = await strategy.fn();
       if (html && html.trim().length > 100) {
-        console.log(`[Client-Side Import] Success via: ${strategy.name}`);
+        console.log(`[Client-Side Import] Strategy succeeded first: ${strategy.name}`);
         return html;
       }
+      throw new Error(`Strategy ${strategy.name} returned empty or invalid content`);
     } catch (err: any) {
-      console.warn(`[Client-Side Import] Strategy ${strategy.name} failed:`, err?.message || err);
+      console.warn(`[Client-Side Import] Parallel strategy failed: ${strategy.name} (${err?.message || err})`);
+      throw err;
     }
-  }
+  });
 
-  throw new Error("Semua strategi pengambilan client-side gagal.");
+  try {
+    // Promise.any resolves with the first successful strategy, ignoring rejections unless all reject
+    return await Promise.any(strategyPromises);
+  } catch (aggregateError) {
+    console.error("[Client-Side Import] All concurrent client strategies failed:", aggregateError);
+    throw new Error("Semua strategi pengambilan client-side gagal.");
+  }
 };
 
 interface PlayerManagerProps {
