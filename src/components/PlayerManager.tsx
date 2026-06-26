@@ -39,6 +39,96 @@ const compressImage = (dataUrl: string, maxWidth = 1024, maxHeight = 1024): Prom
   });
 };
 
+const fetchReclubHtmlClientSide = async (url: string): Promise<string> => {
+  let targetUrl = url.trim();
+  if (!/^https?:\/\//i.test(targetUrl)) {
+    targetUrl = 'https://' + targetUrl;
+  }
+
+  const clientStrategies = [
+    // 1. AllOrigins Proxy (JSONP/CORS wrapper)
+    {
+      name: "AllOrigins Proxy",
+      fn: async () => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
+        try {
+          const res = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`, {
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const json = await res.json();
+          if (json && json.contents) {
+            return json.contents;
+          }
+          throw new Error("Empty contents from AllOrigins");
+        } catch (e) {
+          clearTimeout(timeoutId);
+          throw e;
+        }
+      }
+    },
+    // 2. CorsProxy.io Proxy
+    {
+      name: "CorsProxy.io",
+      fn: async () => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
+        try {
+          const res = await fetch(`https://corsproxy.io/?${encodeURIComponent(targetUrl)}`, {
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const htmlText = await res.text();
+          if (htmlText.includes("Cloudflare") && (htmlText.includes("Access denied") || htmlText.includes("security check"))) {
+            throw new Error("Blocked by Cloudflare on proxy");
+          }
+          return htmlText;
+        } catch (e) {
+          clearTimeout(timeoutId);
+          throw e;
+        }
+      }
+    },
+    // 3. CodeTabs Proxy
+    {
+      name: "CodeTabs Proxy",
+      fn: async () => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 3500);
+        try {
+          const res = await fetch(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`, {
+            signal: controller.signal
+          });
+          clearTimeout(timeoutId);
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return await res.text();
+        } catch (e) {
+          clearTimeout(timeoutId);
+          throw e;
+        }
+      }
+    }
+  ];
+
+  for (const strategy of clientStrategies) {
+    try {
+      console.log(`[Client-Side Import] Trying proxy strategy: ${strategy.name}`);
+      const html = await strategy.fn();
+      if (html && html.trim().length > 100) {
+        console.log(`[Client-Side Import] Success via: ${strategy.name}`);
+        return html;
+      }
+    } catch (err: any) {
+      console.warn(`[Client-Side Import] Strategy ${strategy.name} failed:`, err?.message || err);
+    }
+  }
+
+  throw new Error("Semua strategi pengambilan client-side gagal.");
+};
+
 interface PlayerManagerProps {
   players: Player[];
   onAddPlayer: (player: { name: string; gender: GenderType; skillLevel: SkillLevelType }) => void;
@@ -94,9 +184,23 @@ export default function PlayerManager({
       setReclubUrlError(null);
       setReclubUrlSuccess(null);
 
-      const requestBody = useRawHtml 
-        ? { rawHtml: rawHtmlText.trim() } 
-        : { url: reclubUrl.trim() };
+      let requestBody: any;
+
+      if (useRawHtml) {
+        requestBody = { rawHtml: rawHtmlText.trim() };
+      } else {
+        // Attempt browser-level client-side bypass to fetch Reclub HTML
+        try {
+          console.log('[PlayerManager] Attempting client-side fetch bypass...');
+          const fetchedHtml = await fetchReclubHtmlClientSide(reclubUrl);
+          console.log('[PlayerManager] Client-side fetch bypass succeeded!');
+          requestBody = { rawHtml: fetchedHtml };
+        } catch (clientFetchErr) {
+          console.warn('[PlayerManager] Client-side fetch bypass failed, falling back to server-side fetch:', clientFetchErr);
+          // Graceful fallback to server-side fetch
+          requestBody = { url: reclubUrl.trim() };
+        }
+      }
 
       const response = await fetch('/api/import-reclub', {
         method: 'POST',

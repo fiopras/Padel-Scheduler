@@ -73,7 +73,8 @@ CRITICAL EXTRACTION RULES:
 7. For each player, determine or guess their gender (use "Laki-laki" for male or "Perempuan" for female). If the name is ambiguous, default to "Laki-laki".`
           };
 
-          const apiResponse = await client.models.generateContent({
+          // Wrap the AI model call with a strict 4-second timeout to guarantee we don't hit Vercel's 10-second limit
+          const aiCallPromise = client.models.generateContent({
             model: modelName,
             contents: { parts: [imagePart, textPart] },
             config: {
@@ -98,6 +99,12 @@ CRITICAL EXTRACTION RULES:
               }
             }
           });
+
+          const timeoutPromise = new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error(`AI Model call timed out for ${modelName} after 4 seconds`)), 4000)
+          );
+
+          const apiResponse = await Promise.race([aiCallPromise, timeoutPromise]);
 
           if (apiResponse && apiResponse.text) {
             textResponse = apiResponse.text;
@@ -321,7 +328,7 @@ CRITICAL EXTRACTION RULES:
             name: "Direct Fetch",
             fn: async () => {
               const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 4000);
+              const timeoutId = setTimeout(() => controller.abort(), 2500);
               try {
                 const res = await fetch(targetUrl, {
                   signal: controller.signal,
@@ -348,7 +355,7 @@ CRITICAL EXTRACTION RULES:
             name: "CorsProxy.io",
             fn: async () => {
               const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 4500);
+              const timeoutId = setTimeout(() => controller.abort(), 2500);
               try {
                 const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
                 const res = await fetch(proxyUrl, {
@@ -377,7 +384,7 @@ CRITICAL EXTRACTION RULES:
             name: "AllOrigins.win",
             fn: async () => {
               const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 4500);
+              const timeoutId = setTimeout(() => controller.abort(), 2500);
               try {
                 const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
                 const res = await fetch(proxyUrl, { signal: controller.signal });
@@ -401,7 +408,7 @@ CRITICAL EXTRACTION RULES:
             name: "CodeTabs Proxy",
             fn: async () => {
               const controller = new AbortController();
-              const timeoutId = setTimeout(() => controller.abort(), 4500);
+              const timeoutId = setTimeout(() => controller.abort(), 2500);
               try {
                 const proxyUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`;
                 const res = await fetch(proxyUrl, {
