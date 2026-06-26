@@ -360,8 +360,10 @@
 
 .light-theme .hover\:bg-\[\#121B2E\]:hover,
 .light-theme .hover\:bg-slate-800:hover,
-.light-theme .hover\:bg-[#121B2E]:hover,
-.light-theme .hover\:bg-[#0c1221]:hover,
+.light-theme .hover\:bg-\[\#121B2E\/30\]:hover,
+.light-theme .hover\:bg-\[\#121B2E\/40\]:hover,
+.light-theme .hover\:bg-\[\#0c1221\]:hover,
+.light-theme .hover\:bg-\[\#0c1221\/50\]:hover,
 .light-theme .hover\:bg-slate-950:hover {
   background-color: var(--accent-bg) !important;
   color: var(--accent-color) !important;
