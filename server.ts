@@ -26,13 +26,11 @@ function getGemini(): GoogleGenAI {
   return aiClient;
 }
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+const app = express();
 
-  // Set higher body limits to allow base64 screenshot uploads
-  app.use(express.json({ limit: "25mb" }));
-  app.use(express.urlencoded({ limit: "25mb", extended: true }));
+// Set higher body limits to allow base64 screenshot uploads
+app.use(express.json({ limit: "25mb" }));
+app.use(express.urlencoded({ limit: "25mb", extended: true }));
 
   // Server-side AI Extraction API endpoint with multi-model fallback resiliency
   app.post("/api/extract-players", async (req, res) => {
@@ -52,17 +50,16 @@ async function startServer() {
       for (const modelName of candidateModels) {
         try {
           console.log(`[AI Extraction] Attempting player extraction with model: ${modelName}`);
-          const apiResponse = await client.models.generateContent({
-            model: modelName,
-            contents: [
-              {
-                inlineData: {
-                  data: base64Data,
-                  mimeType: mimeType || "image/png"
-                }
-              },
-              {
-                text: `Analyze this image, which is a screenshot of the Reclub mobile app sports participants list.
+          
+          const imagePart = {
+            inlineData: {
+              data: base64Data,
+              mimeType: mimeType || "image/png"
+            }
+          };
+
+          const textPart = {
+            text: `Analyze this image, which is a screenshot of the Reclub mobile app sports participants list.
 
 CRITICAL EXTRACTION RULES:
 1. Find the header indicating the count of confirmed participants (e.g., "Dikonfirmasi • 12" or "Confirmed • 12" or "Going • 12"). This count represents the exact number of active players we want to extract.
@@ -72,8 +69,12 @@ CRITICAL EXTRACTION RULES:
 5. DO NOT extract names from any other sections (like waitlist, maybe, organizers, or past matches) if they exist.
 6. DO NOT invent, guess, or hallucinate names. The list must match the visual count (e.g., if the header says 12, there should be exactly 12 players extracted).
 7. For each player, determine or guess their gender (use "Laki-laki" for male or "Perempuan" for female). If the name is ambiguous, default to "Laki-laki".`
-              }
-            ],
+          };
+
+          // Wrap the AI model call with a strict 4-second timeout to guarantee we don't hit Vercel's 10-second limit
+          const aiCallPromise = client.models.generateContent({
+            model: modelName,
+            contents: { parts: [imagePart, textPart] },
             config: {
               responseMimeType: "application/json",
               responseSchema: {
@@ -96,6 +97,12 @@ CRITICAL EXTRACTION RULES:
               }
             }
           });
+
+          const timeoutPromise = new Promise<never>((_, reject) => 
+            setTimeout(() => reject(new Error(`AI Model call timed out for ${modelName} after 4 seconds`)), 4000)
+          );
+
+          const apiResponse = await Promise.race([aiCallPromise, timeoutPromise]);
 
           if (apiResponse && apiResponse.text) {
             textResponse = apiResponse.text;
@@ -310,33 +317,174 @@ CRITICAL EXTRACTION RULES:
 
         console.log(`[Reclub Import] Fetching URL: ${targetUrl}`);
         
-        // Setup AbortController for an 8-second timeout to allow slow connections but prevent indefinite hangs
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 8000);
+        let success = false;
+        let lastErrorMsg = "";
+
+        const fetchStrategies = [
+          // 1. Google Focus Proxy (Extremely reliable bypass via Google crawler IPs)
+          {
+            name: "Google Focus Proxy",
+            fn: async () => {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 3500);
+              try {
+                // Append small cache buster param to targetUrl to ensure fresh fetch
+                const cbUrl = targetUrl + (targetUrl.includes('?') ? '&' : '?') + `_cb=${Date.now()}`;
+                const proxyUrl = `https://images-focus-opensocial.googleusercontent.com/gadgets/proxy?container=focus&refresh=1&url=${encodeURIComponent(cbUrl)}`;
+                const res = await fetch(proxyUrl, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (!res.ok) {
+                  throw new Error(`Google Proxy HTTP Status ${res.status}`);
+                }
+                const body = await res.text();
+                if (!body || body.trim().length < 200) {
+                  throw new Error("Returned payload too short or empty");
+                }
+                if (body.includes("Cloudflare") && (body.includes("Access denied") || body.includes("security check"))) {
+                  throw new Error("Blocked by Cloudflare on Google proxy");
+                }
+                return { html: body, url: targetUrl };
+              } catch (e) {
+                clearTimeout(timeoutId);
+                throw e;
+              }
+            }
+          },
+          // 2. Direct Fetch with Browser User-Agent
+          {
+            name: "Direct Fetch",
+            fn: async () => {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 3000);
+              try {
+                const res = await fetch(targetUrl, {
+                  signal: controller.signal,
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+                  }
+                });
+                clearTimeout(timeoutId);
+                if (!res.ok) {
+                  throw new Error(`HTTP Status ${res.status}`);
+                }
+                const body = await res.text();
+                return { html: body, url: res.url };
+              } catch (e) {
+                clearTimeout(timeoutId);
+                throw e;
+              }
+            }
+          },
+          // 3. CorsProxy.io Bypass
+          {
+            name: "CorsProxy.io",
+            fn: async () => {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 3000);
+              try {
+                const proxyUrl = `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`;
+                const res = await fetch(proxyUrl, {
+                  signal: controller.signal,
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                  }
+                });
+                clearTimeout(timeoutId);
+                if (!res.ok) {
+                  throw new Error(`Proxy HTTP Status ${res.status}`);
+                }
+                const body = await res.text();
+                if (body.includes("Cloudflare") && (body.includes("Access denied") || body.includes("security check"))) {
+                  throw new Error("Blocked by Cloudflare on proxy");
+                }
+                return { html: body, url: targetUrl };
+              } catch (e) {
+                clearTimeout(timeoutId);
+                throw e;
+              }
+            }
+          },
+          // 4. AllOrigins.win Bypass
+          {
+            name: "AllOrigins.win",
+            fn: async () => {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 3000);
+              try {
+                const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
+                const res = await fetch(proxyUrl, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (!res.ok) {
+                  throw new Error(`Proxy HTTP Status ${res.status}`);
+                }
+                const json = await res.json() as any;
+                if (!json.contents) {
+                  throw new Error("Empty contents from AllOrigins");
+                }
+                return { html: json.contents, url: targetUrl };
+              } catch (e) {
+                clearTimeout(timeoutId);
+                throw e;
+              }
+            }
+          },
+          // 5. CodeTabs Proxy Bypass
+          {
+            name: "CodeTabs Proxy",
+            fn: async () => {
+              const controller = new AbortController();
+              const timeoutId = setTimeout(() => controller.abort(), 3000);
+              try {
+                const proxyUrl = `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(targetUrl)}`;
+                const res = await fetch(proxyUrl, {
+                  signal: controller.signal,
+                  headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                  }
+                });
+                clearTimeout(timeoutId);
+                if (!res.ok) {
+                  throw new Error(`Proxy HTTP Status ${res.status}`);
+                }
+                const body = await res.text();
+                return { html: body, url: targetUrl };
+              } catch (e) {
+                clearTimeout(timeoutId);
+                throw e;
+              }
+            }
+          }
+        ];
+
+        // Run all strategies concurrently for maximum speed and fallback capability.
+        // Promise.any resolves with the fastest successful strategy, and fails if all fail.
+        const strategyPromises = fetchStrategies.map(async (strategy) => {
+          try {
+            console.log(`[Reclub Import] Triggered parallel strategy: ${strategy.name}`);
+            const result = await strategy.fn();
+            if (result.html && result.html.trim().length > 100) {
+              console.log(`[Reclub Import] Strategy succeeded first: ${strategy.name}`);
+              return result;
+            }
+            throw new Error(`Strategy ${strategy.name} returned empty or invalid content`);
+          } catch (err: any) {
+            console.warn(`[Reclub Import] Parallel strategy failed: ${strategy.name} (${err?.message || err})`);
+            throw err;
+          }
+        });
 
         try {
-          const response = await fetch(targetUrl, {
-            signal: controller.signal,
-            headers: {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-              'Accept-Language': 'id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7',
-              'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-            }
-          });
+          const result = await Promise.any(strategyPromises);
+          html = result.html;
+          success = true;
 
-          clearTimeout(timeoutId);
-
-          if (!response.ok) {
-            throw new Error(`Gagal mengambil data dari Reclub (HTTP ${response.status}). Batasan keamanan/Cloudflare dari server Reclub membatasi akses otomatis dari server luring.`);
-          }
-
-          html = await response.text();
-
-          // Update urlSlug if we were redirected to a full canonical/friendly URL (e.g. /m/event-slug-E93XSO)
-          if (response.url && response.url !== targetUrl) {
-            console.log(`[Reclub Import] Redirected to final URL: ${response.url}`);
+          // Handle redirection detection for final urlSlug update
+          if (result.url && result.url !== targetUrl) {
+            console.log(`[Reclub Import] Redirected to final URL: ${result.url}`);
             try {
-              const finalUrlObj = new URL(response.url);
+              const finalUrlObj = new URL(result.url);
               const pathParts = finalUrlObj.pathname.split('/').filter(Boolean);
               if (pathParts.length > 0) {
                 const finalSlug = pathParts[pathParts.length - 1].toLowerCase().trim();
@@ -347,12 +495,13 @@ CRITICAL EXTRACTION RULES:
               }
             } catch (err) {}
           }
-        } catch (fetchErr: any) {
-          clearTimeout(timeoutId);
-          if (fetchErr.name === 'AbortError') {
-            throw new Error("Koneksi langsung diblokir oleh sistem keamanan Cloudflare Reclub (Timeout). Silakan klik tombol 'Gunakan Metode Paste HTML' di bawah untuk mengekstrak data 100% instan tanpa hambatan server!");
-          }
-          throw fetchErr;
+        } catch (aggregateError: any) {
+          console.error("[Reclub Import] All concurrent strategies failed:", aggregateError);
+          lastErrorMsg = "Semua proxy / link bypass gagal merespon atau diblokir oleh Cloudflare.";
+        }
+
+        if (!success) {
+          throw new Error(`Koneksi diblokir oleh Cloudflare Reclub (${lastErrorMsg}). Batasan keamanan Cloudflare memblokir akses langsung dari server cloud (baik Vercel maupun AI Studio). Silakan klik tombol kuning "⚠️ Link Error? Gunakan Metode Paste HTML" di atas untuk menyalin langsung data halaman permainan Anda!`);
         }
       }
 
@@ -782,24 +931,32 @@ CRITICAL EXTRACTION RULES:
     }
   });
 
-  // Serve static dist folder in production, or mount Vite middleware in development
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+  // Serve static dist folder in production, or mount Vite middleware in development (skipped on Vercel)
+  async function initServer() {
+    if (!process.env.VERCEL) {
+      if (process.env.NODE_ENV !== "production") {
+        const vite = await createViteServer({
+          server: { middlewareMode: true },
+          appType: "spa",
+        });
+        app.use(vite.middlewares);
+      } else {
+        const distPath = path.join(process.cwd(), 'dist');
+        app.use(express.static(distPath));
+        app.get('*', (req, res) => {
+          res.sendFile(path.join(distPath, 'index.html'));
+        });
+      }
+
+      const PORT = 3000;
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`[Cotta Master] Server running on http://localhost:${PORT} in ${process.env.NODE_ENV || "development"} mode`);
+      });
+    }
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Cotta Master] Server running on http://localhost:${PORT} in ${process.env.NODE_ENV || "development"} mode`);
+  initServer().catch((err) => {
+    console.error("Failed to initialize server:", err);
   });
-}
 
-startServer();
+export default app;
