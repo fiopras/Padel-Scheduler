@@ -42,7 +42,7 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
       const client = getGemini();
 
       // List of highly compatible models to try sequentially in case of 503/peak demand errors
-      const candidateModels = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"];
+      const candidateModels = ["gemini-3.5-flash", "gemini-3-flash", "gemini-2.5-flash"];
       let lastError: any = null;
       let textResponse: string | null = null;
 
