@@ -41,8 +41,8 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
 
       const client = getGemini();
 
-      // List of highly compatible models to try sequentially in case of 503/peak demand errors
-      const candidateModels = ["gemini-3.5-flash", "gemini-3-flash", "gemini-2.5-flash"];
+      // Use the best available high-speed model with a generous timeout to ensure reliability
+      const candidateModels = ["gemini-3.5-flash"];
       let lastError: any = null;
       let textResponse: string | null = null;
 
@@ -98,7 +98,7 @@ CRITICAL EXTRACTION RULES:
           });
 
           const timeoutPromise = new Promise<never>((_, reject) => 
-            setTimeout(() => reject(new Error(`AI Model call timed out for ${modelName} after 4 seconds`)), 4000)
+            setTimeout(() => reject(new Error(`AI Model call timed out for ${modelName} after 8 seconds`)), 8000)
           );
 
           const apiResponse = await Promise.race([aiCallPromise, timeoutPromise]);
