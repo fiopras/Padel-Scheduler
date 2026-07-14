@@ -2,8 +2,31 @@ import express from "express";
 import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
+import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
+
+// Lazy initialize Supabase client
+let supabaseClient: any = null;
+function getSupabase() {
+  if (!supabaseClient) {
+    const url = process.env.SUPABASE_URL;
+    const key = process.env.SUPABASE_KEY;
+    if (url && key) {
+      supabaseClient = createClient(url, key);
+      console.log("[Supabase] Client initialized successfully.");
+    } else {
+      console.warn("[Supabase] SUPABASE_URL or SUPABASE_KEY is missing. Falling back to in-memory storage.");
+    }
+  }
+  return supabaseClient;
+}
+
+// In-memory fallback database state
+let inMemoryPadelData = {
+  events: [] as any[],
+  activeEventId: null as string | null
+};
 
 // Lazy initialize Gemini client
 let aiClient: GoogleGenAI | null = null;
@@ -30,6 +53,74 @@ const app = express();
 // Set higher body limits to allow base64 screenshot uploads
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ limit: "25mb", extended: true }));
+
+  // Get Padel Scheduler state (events and activeEventId)
+  app.get("/api/events", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (supabase) {
+        console.log("[Supabase] Fetching padel data...");
+        const { data, error } = await supabase
+          .from("padel_data")
+          .select("data")
+          .eq("id", "active_state")
+          .maybeSingle();
+
+        if (error) {
+          console.error("[Supabase] Error fetching data:", error);
+          throw error;
+        }
+
+        if (data && data.data) {
+          return res.json(data.data);
+        } else {
+          console.log("[Supabase] No data found in table, returning default empty state.");
+          return res.json({ events: [], activeEventId: null });
+        }
+      } else {
+        // Fallback to in-memory storage
+        console.log("[Memory Fallback] Fetching in-memory padel data...");
+        return res.json(inMemoryPadelData);
+      }
+    } catch (err: any) {
+      console.error("Failed to get events:", err);
+      res.status(500).json({ error: err?.message || "Failed to load events from database." });
+    }
+  });
+
+  // Save Padel Scheduler state (events and activeEventId)
+  app.post("/api/events", async (req, res) => {
+    try {
+      const { events, activeEventId } = req.body;
+      const supabase = getSupabase();
+      
+      if (supabase) {
+        console.log("[Supabase] Saving padel data...");
+        const { error } = await supabase
+          .from("padel_data")
+          .upsert({
+            id: "active_state",
+            data: { events, activeEventId },
+            updated_at: new Date()
+          });
+
+        if (error) {
+          console.error("[Supabase] Error saving data:", error);
+          throw error;
+        }
+        console.log("[Supabase] Save successful.");
+        return res.json({ success: true });
+      } else {
+        // Fallback to in-memory storage
+        console.log("[Memory Fallback] Saving to in-memory padel data...");
+        inMemoryPadelData = { events, activeEventId };
+        return res.json({ success: true });
+      }
+    } catch (err: any) {
+      console.error("Failed to save events:", err);
+      res.status(500).json({ error: err?.message || "Failed to save events to database." });
+    }
+  });
 
   // Server-side AI Extraction API endpoint with multi-model fallback resiliency
   app.post("/api/extract-players", async (req, res) => {

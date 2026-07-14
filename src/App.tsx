@@ -18,7 +18,10 @@ import {
   Coins,
   Compass,
   Sun,
-  Moon
+  Moon,
+  Cloud,
+  CloudOff,
+  RefreshCw
 } from 'lucide-react';
 import { Player, Match, TournamentConfig, GenderType, SkillLevelType, TournamentFormat, ScoringType, PadelEvent } from './types';
 import { generateSchedule, recalculateLeaderboard } from './utils/scheduler';
@@ -170,22 +173,12 @@ export default function App() {
   });
   const [roundsCount, setRoundsCount] = React.useState<number>(3);
 
+  // State to track synchronization status
+  const [syncStatus, setSyncStatus] = React.useState<'loading' | 'synced' | 'saving' | 'error'>('loading');
+
   // Event History and active event
-  const [events, setEvents] = React.useState<PadelEvent[]>(() => {
-    try {
-      const saved = localStorage.getItem('court_master_events');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch (e) {
-      console.error("Failed to parse events from localStorage:", e);
-    }
-    return [];
-  });
-  const [activeEventId, setActiveEventId] = React.useState<string | null>(() => {
-    return localStorage.getItem('court_master_active_event_id') || null;
-  });
+  const [events, setEvents] = React.useState<PadelEvent[]>([]);
+  const [activeEventId, setActiveEventId] = React.useState<string | null>(null);
 
   // UI Notification alert
   const [notification, setNotification] = React.useState<{ text: string; type: 'success' | 'error' } | null>(null);
@@ -221,8 +214,56 @@ export default function App() {
     }, 4000);
   };
 
-  // Seed initial events if none exist
+  // Load initial data from the database
   React.useEffect(() => {
+    async function loadData() {
+      try {
+        setSyncStatus('loading');
+        const res = await fetch('/api/events');
+        if (!res.ok) throw new Error("Server error loading data");
+        const data = await res.json();
+        
+        if (data && Array.isArray(data.events)) {
+          setEvents(data.events);
+          if (data.activeEventId) {
+            setActiveEventId(data.activeEventId);
+            loadedEventIdRef.current = data.activeEventId;
+          }
+          setSyncStatus('synced');
+        } else {
+          loadLocalStorageFallback();
+        }
+      } catch (e) {
+        console.error("Failed to fetch events from server, falling back to local storage:", e);
+        loadLocalStorageFallback();
+        setSyncStatus('error');
+      }
+    }
+
+    function loadLocalStorageFallback() {
+      try {
+        const saved = localStorage.getItem('court_master_events');
+        const activeId = localStorage.getItem('court_master_active_event_id');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (Array.isArray(parsed)) {
+            setEvents(parsed);
+            if (activeId) {
+              setActiveEventId(activeId);
+              loadedEventIdRef.current = activeId;
+            }
+          }
+        }
+      } catch (e) {}
+      setSyncStatus('synced');
+    }
+
+    loadData();
+  }, []);
+
+  // Seed initial events if none exist and we have finished loading
+  React.useEffect(() => {
+    if (syncStatus !== 'synced') return; // Wait until initial sync loads
     if (events.length === 0) {
       const defaultEvent: PadelEvent = {
         id: 'evt-seed',
@@ -248,22 +289,41 @@ export default function App() {
       localStorage.setItem('court_master_events', JSON.stringify([defaultEvent]));
       localStorage.setItem('court_master_active_event_id', 'evt-seed');
     }
-  }, []);
+  }, [events, syncStatus]);
 
-  // Save events to localStorage whenever they change
+  // Auto-save events and activeEventId to the database whenever they change
   React.useEffect(() => {
-    if (events.length > 0) {
-      localStorage.setItem('court_master_events', JSON.stringify(events));
-    }
-  }, [events]);
+    if (syncStatus === 'loading') return;
 
-  React.useEffect(() => {
-    if (activeEventId) {
-      localStorage.setItem('court_master_active_event_id', activeEventId);
-    } else {
-      localStorage.removeItem('court_master_active_event_id');
-    }
-  }, [activeEventId]);
+    const timer = setTimeout(async () => {
+      try {
+        setSyncStatus('saving');
+        const res = await fetch('/api/events', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ events, activeEventId }),
+        });
+        
+        if (!res.ok) throw new Error("Failed to save data");
+        
+        localStorage.setItem('court_master_events', JSON.stringify(events));
+        if (activeEventId) {
+          localStorage.setItem('court_master_active_event_id', activeEventId);
+        } else {
+          localStorage.removeItem('court_master_active_event_id');
+        }
+
+        setSyncStatus('synced');
+      } catch (e) {
+        console.error("Failed to auto-save data to server:", e);
+        setSyncStatus('error');
+      }
+    }, 1500);
+
+    return () => clearTimeout(timer);
+  }, [events, activeEventId]);
 
   // Load active event data into states when activeEventId changes
   React.useEffect(() => {
@@ -730,6 +790,28 @@ export default function App() {
             <div>
               <h1 className="text-base font-black tracking-tight text-white flex items-center gap-1.5 leading-none font-display">
                 COTTA MASTER <span className="text-[9px] bg-teal-500/10 text-teal-400 py-1 px-1.5 rounded font-black border border-teal-550/20 tracking-wider">PRO</span>
+                
+                {/* Cloud Sync Status Indicator */}
+                {syncStatus === 'loading' && (
+                  <span className="text-[9px] bg-blue-500/10 text-blue-400 py-1 px-1.5 rounded font-semibold border border-blue-500/20 tracking-wide flex items-center gap-1">
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin" /> Loading
+                  </span>
+                )}
+                {syncStatus === 'saving' && (
+                  <span className="text-[9px] bg-amber-500/10 text-amber-400 py-1 px-1.5 rounded font-semibold border border-amber-500/20 tracking-wide flex items-center gap-1">
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin" /> Menyimpan...
+                  </span>
+                )}
+                {syncStatus === 'synced' && (
+                  <span className="text-[9px] bg-emerald-500/10 text-emerald-400 py-1 px-1.5 rounded font-semibold border border-emerald-500/20 tracking-wide flex items-center gap-1" title="Data tersimpan di Cloud Database (Supabase)">
+                    <Cloud className="w-2.5 h-2.5 text-emerald-400" /> Synced
+                  </span>
+                )}
+                {syncStatus === 'error' && (
+                  <span className="text-[9px] bg-rose-500/10 text-rose-400 py-1 px-1.5 rounded font-semibold border border-rose-500/20 tracking-wide flex items-center gap-1" title="Gagal terhubung ke Cloud. Menggunakan penyimpanan lokal.">
+                    <CloudOff className="w-2.5 h-2.5 text-rose-400" /> Offline
+                  </span>
+                )}
               </h1>
               <p className="text-[9px] text-[#94A3B8] font-bold tracking-widest uppercase mt-1.5 font-mono">Excel Sports Scheduler & Analyst</p>
             </div>
