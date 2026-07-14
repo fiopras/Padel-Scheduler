@@ -26,13 +26,11 @@ function getGemini(): GoogleGenAI {
   return aiClient;
 }
 
-async function startServer() {
-  const app = express();
-  const PORT = 3000;
+const app = express();
 
-  // Set higher body limits to allow base64 screenshot uploads
-  app.use(express.json({ limit: "25mb" }));
-  app.use(express.urlencoded({ limit: "25mb", extended: true }));
+// Set higher body limits to allow base64 screenshot uploads
+app.use(express.json({ limit: "25mb" }));
+app.use(express.urlencoded({ limit: "25mb", extended: true }));
 
   // Server-side AI Extraction API endpoint with multi-model fallback resiliency
   app.post("/api/extract-players", async (req, res) => {
@@ -933,24 +931,32 @@ CRITICAL EXTRACTION RULES:
     }
   });
 
-  // Serve static dist folder in production, or mount Vite middleware in development
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
+  // Serve static dist folder in production, or mount Vite middleware in development (skipped on Vercel)
+  async function initServer() {
+    if (!process.env.VERCEL) {
+      if (process.env.NODE_ENV !== "production") {
+        const vite = await createViteServer({
+          server: { middlewareMode: true },
+          appType: "spa",
+        });
+        app.use(vite.middlewares);
+      } else {
+        const distPath = path.join(process.cwd(), 'dist');
+        app.use(express.static(distPath));
+        app.get('*', (req, res) => {
+          res.sendFile(path.join(distPath, 'index.html'));
+        });
+      }
+
+      const PORT = 3000;
+      app.listen(PORT, "0.0.0.0", () => {
+        console.log(`[Cotta Master] Server running on http://localhost:${PORT} in ${process.env.NODE_ENV || "development"} mode`);
+      });
+    }
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`[Cotta Master] Server running on http://localhost:${PORT} in ${process.env.NODE_ENV || "development"} mode`);
+  initServer().catch((err) => {
+    console.error("Failed to initialize server:", err);
   });
-}
 
-startServer();
+export default app;
