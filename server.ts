@@ -122,15 +122,17 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
           .maybeSingle();
 
         if (error) {
-          console.error("[Supabase] Error fetching data:", error);
-          throw error;
+          console.warn("[Supabase] Query error (falling back to memory):", error.message);
+          return res.json(inMemoryPadelData);
         }
 
         if (data && data.data) {
+          // Keep inMemoryPadelData synced
+          inMemoryPadelData = data.data;
           return res.json(data.data);
         } else {
-          console.log("[Supabase] No data found in table, returning default empty state.");
-          return res.json({ events: [], activeEventId: null });
+          console.log("[Supabase] No data found in table, returning memory state.");
+          return res.json(inMemoryPadelData);
         }
       } else {
         // Fallback to in-memory storage
@@ -139,7 +141,7 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
       }
     } catch (err: any) {
       console.error("Failed to get events:", err);
-      res.status(500).json({ error: err?.message || "Failed to load events from database." });
+      return res.json(inMemoryPadelData);
     }
   });
 
@@ -149,6 +151,11 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
       const { events, activeEventId, allowEmpty } = req.body;
       if (!Array.isArray(events)) {
         return res.status(400).json({ error: "Invalid payload: events must be an array." });
+      }
+
+      // Always update inMemoryPadelData first so server memory stays current
+      if (events.length > 0 || allowEmpty || inMemoryPadelData.events.length === 0) {
+        inMemoryPadelData = { events, activeEventId };
       }
 
       const supabase = getSupabase();
@@ -178,25 +185,18 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
           });
 
         if (error) {
-          console.error("[Supabase] Error saving data:", error);
-          throw error;
+          console.warn("[Supabase] Save error (saved in memory fallback):", error.message);
+          return res.json({ success: true, warning: error.message });
         }
         console.log("[Supabase] Save successful.");
         return res.json({ success: true });
       } else {
-        // Fallback to in-memory storage with safety protection
-        if (events.length === 0 && !allowEmpty && inMemoryPadelData.events.length > 0) {
-          console.warn("[Memory Protection] Ignored empty save request to prevent overwriting existing in-memory data.");
-          return res.json({ success: true, protected: true });
-        }
-
-        console.log(`[Memory Fallback] Saving to in-memory padel data (${events.length} events)...`);
-        inMemoryPadelData = { events, activeEventId };
+        console.log(`[Memory Fallback] Saved to in-memory padel data (${events.length} events)...`);
         return res.json({ success: true });
       }
     } catch (err: any) {
       console.error("Failed to save events:", err);
-      res.status(500).json({ error: err?.message || "Failed to save events to database." });
+      return res.json({ success: true, warning: err?.message });
     }
   });
 
