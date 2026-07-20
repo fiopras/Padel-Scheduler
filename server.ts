@@ -50,9 +50,13 @@ function getGemini(): GoogleGenAI {
 
 const app = express();
 
-// Set higher body limits to allow base64 screenshot uploads
-app.use(express.json({ limit: "25mb" }));
-app.use(express.urlencoded({ limit: "25mb", extended: true }));
+// Disable HTTP caching for API endpoints to prevent 304 Not Modified browser cache
+app.use("/api", (req, res, next) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+  res.setHeader("Pragma", "no-cache");
+  res.setHeader("Expires", "0");
+  next();
+});
 
   // Check Supabase DB status & health
   app.get("/api/db-status", async (req, res) => {
