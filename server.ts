@@ -11,7 +11,7 @@ let supabaseClient: any = null;
 function getSupabase() {
   if (!supabaseClient) {
     const url = process.env.SUPABASE_URL;
-    const key = process.env.SUPABASE_KEY;
+    const key = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SECRET_KEY;
     if (url && key) {
       supabaseClient = createClient(url, key);
       console.log("[Supabase] Client initialized successfully.");
@@ -58,14 +58,14 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   app.get("/api/db-status", async (req, res) => {
     try {
       const url = process.env.SUPABASE_URL;
-      const key = process.env.SUPABASE_KEY;
+      const key = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SECRET_KEY;
       const supabase = getSupabase();
 
       if (!url || !key) {
         return res.json({
           connected: false,
           storage: "in-memory-fallback",
-          reason: "SUPABASE_URL or SUPABASE_KEY environment variable is not configured on the server.",
+          reason: "SUPABASE_URL or SUPABASE_KEY/SUPABASE_SECRET_KEY environment variable is not configured on the server.",
           hint: "Add SUPABASE_URL and SUPABASE_KEY to Environment Variables in your server/Vercel settings."
         });
       }
