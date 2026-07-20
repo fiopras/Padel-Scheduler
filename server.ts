@@ -6,20 +6,16 @@ import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
-// Lazy initialize Supabase client
-let supabaseClient: any = null;
+// Initialize Supabase client dynamically per request to prevent serverless container schema caching
 function getSupabase() {
-  if (!supabaseClient) {
-    const url = process.env.SUPABASE_URL;
-    const key = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SECRET_KEY;
-    if (url && key) {
-      supabaseClient = createClient(url, key);
-      console.log("[Supabase] Client initialized successfully.");
-    } else {
-      console.warn("[Supabase] SUPABASE_URL or SUPABASE_KEY is missing. Falling back to in-memory storage.");
-    }
+  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const key = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SECRET_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (url && key) {
+    return createClient(url, key, {
+      auth: { persistSession: false }
+    });
   }
-  return supabaseClient;
+  return null;
 }
 
 // In-memory fallback database state
@@ -38,11 +34,6 @@ function getGemini(): GoogleGenAI {
     }
     aiClient = new GoogleGenAI({
       apiKey: key,
-      httpOptions: {
-        headers: {
-          'User-Agent': 'aistudio-build',
-        }
-      }
     });
   }
   return aiClient;
@@ -58,11 +49,15 @@ app.use("/api", (req, res, next) => {
   next();
 });
 
+// Set higher body limits to allow base64 screenshot uploads
+app.use(express.json({ limit: "25mb" }));
+app.use(express.urlencoded({ limit: "25mb", extended: true }));
+
   // Check Supabase DB status & health
   app.get("/api/db-status", async (req, res) => {
     try {
-      const url = process.env.SUPABASE_URL;
-      const key = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SECRET_KEY;
+      const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+      const key = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SECRET_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
       const supabase = getSupabase();
 
       if (!url || !key) {
@@ -88,10 +83,13 @@ app.use("/api", (req, res, next) => {
         .eq("id", "active_state")
         .maybeSingle();
 
+      const urlHost = url ? new URL(url).hostname : null;
+
       if (error) {
         return res.json({
           connected: false,
           storage: "in-memory-fallback",
+          urlHost,
           reason: `Supabase database error: ${error.message} (Code: ${error.code})`,
           hint: "Ensure table 'padel_data' exists with schema: CREATE TABLE padel_data (id text primary key, data jsonb, updated_at timestamptz) and RLS is disabled."
         });
@@ -100,6 +98,7 @@ app.use("/api", (req, res, next) => {
       return res.json({
         connected: true,
         storage: "supabase",
+        urlHost,
         hasState: !!data,
         updatedAt: data?.updated_at || null,
         eventsCount: data?.data?.events?.length || 0
