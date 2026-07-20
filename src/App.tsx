@@ -325,10 +325,11 @@ export default function App() {
     return () => clearInterval(interval);
   }, [events, activeEventId]);
 
-  // Seed initial events if none exist and initial load is 100% complete
+  // Seed initial events ONLY on very first load if no data exists at all
+  const userHasClearedRef = React.useRef(false);
   React.useEffect(() => {
-    if (!initialLoadDoneRef.current || syncStatus === 'loading') return;
-    if (events.length === 0) {
+    if (!initialLoadDoneRef.current || syncStatus === 'loading' || userHasClearedRef.current) return;
+    if (events.length === 0 && !localStorage.getItem('court_master_events')) {
       const defaultEvent: PadelEvent = {
         id: 'evt-seed',
         name: 'Friday Night Padel (Contoh)',
@@ -367,7 +368,7 @@ export default function App() {
           headers: {
             'Content-Type': 'application/json',
           },
-          body: JSON.stringify({ events, activeEventId }),
+          body: JSON.stringify({ events, activeEventId, allowEmpty: true }),
         });
         
         if (!res.ok) throw new Error("Failed to save data");
@@ -806,18 +807,35 @@ export default function App() {
     triggerConfirm(
       'Hapus Event dari Riwayat',
       'Apakah Anda benar-benar yakin ingin menghapus event ini? Seluruh data tanding di dalamnya akan terhapus secara permanen.',
-      () => {
+      async () => {
         const nextEvents = events.filter(e => e.id !== id);
-        setEvents(nextEvents);
+        let nextActiveId = activeEventId;
+
         if (activeEventId === id) {
           if (nextEvents.length > 0) {
+            nextActiveId = nextEvents[0].id;
             setActiveEventId(nextEvents[0].id);
           } else {
+            nextActiveId = null;
             setActiveEventId(null);
             setPlayers([]);
             setMatches([]);
+            userHasClearedRef.current = true;
           }
         }
+        setEvents(nextEvents);
+
+        // Instantly sync deletion with Supabase backend
+        try {
+          await fetch('/api/events', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ events: nextEvents, activeEventId: nextActiveId, allowEmpty: true }),
+          });
+        } catch (e) {
+          console.warn("Failed to sync event deletion with server:", e);
+        }
+
         showNotification('Event dihapus.', 'success');
       }
     );
@@ -858,9 +876,21 @@ export default function App() {
     triggerConfirm(
       'Hapus Seluruh Data',
       'Apakah Anda benar-benar yakin ingin menghapus seluruh data sirkuit atlet dan jadwal pertandingan aktif?',
-      () => {
+      async () => {
+        userHasClearedRef.current = true;
+        setEvents([]);
+        setActiveEventId(null);
         setPlayers([]);
         setMatches([]);
+
+        try {
+          await fetch('/api/events', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ events: [], activeEventId: null, allowEmpty: true }),
+          });
+        } catch (e) {}
+
         showNotification('Database dibersihkan.', 'success');
       }
     );
