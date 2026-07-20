@@ -44,18 +44,20 @@ const getMinOpponentCount = (
 };
 
 /**
- * Generates an event schedule based on player list and tournament configuration
+ * Generates additional rounds for an existing schedule of matches.
+ * Preserves existing matches and appends new matches for additionalRoundsCount rounds.
  */
-export function generateSchedule(
+export function generateAdditionalRounds(
   players: Player[],
   config: TournamentConfig,
-  roundsCount: number,
+  additionalRoundsCount: number,
+  existingMatches: Match[] = [],
   playerPointsMap?: Record<string, number>
 ): Match[] {
-  if (players.length < 2) return [];
-  if (config.format === 'Doubles' && players.length < 4) return [];
+  if (players.length < 2 || additionalRoundsCount <= 0) return existingMatches;
+  if (config.format === 'Doubles' && players.length < 4) return existingMatches;
 
-  const matches: Match[] = [];
+  const currentMaxRound = existingMatches.reduce((max, m) => Math.max(max, m.round), 0);
 
   // Track state for relationship balancing
   const playedCount: Record<string, number> = {};
@@ -77,8 +79,33 @@ export function generateSchedule(
     opponentCount[key] = (opponentCount[key] || 0) + 1;
   };
 
-  // Generate round-by-round
-  for (let r = 1; r <= roundsCount; r++) {
+  // Populate tracking with existing match history
+  existingMatches.forEach((m) => {
+    m.team1.forEach((pid) => {
+      playedCount[pid] = (playedCount[pid] || 0) + 1;
+    });
+    m.team2.forEach((pid) => {
+      playedCount[pid] = (playedCount[pid] || 0) + 1;
+    });
+
+    if (m.team1.length >= 2) {
+      incrementPartner(m.team1[0], m.team1[1]);
+    }
+    if (m.team2.length >= 2) {
+      incrementPartner(m.team2[0], m.team2[1]);
+    }
+
+    m.team1.forEach((pid1) => {
+      m.team2.forEach((pid2) => {
+        incrementOpponent(pid1, pid2);
+      });
+    });
+  });
+
+  const newMatches: Match[] = [];
+
+  // Generate round-by-round from (currentMaxRound + 1) to (currentMaxRound + additionalRoundsCount)
+  for (let r = currentMaxRound + 1; r <= currentMaxRound + additionalRoundsCount; r++) {
     // 1. Determine how many courts we can active this round
     const formatSize = config.format === 'Doubles' ? 4 : 2;
     const maxCourtsPossible = Math.floor(players.length / formatSize);
@@ -216,7 +243,7 @@ export function generateSchedule(
             (p) => p.id !== p1.id && p.id !== p2.id
           );
 
-          matches.push({
+          newMatches.push({
             id: `M-R${r}-C${c}-${Math.random().toString(36).substr(2, 4)}`,
             courtName: `Court ${c}`,
             round: r,
@@ -394,7 +421,7 @@ export function generateSchedule(
             (p) => p.id !== p1.id && p.id !== p2.id && p.id !== p3.id && p.id !== p4.id
           );
 
-          matches.push({
+          newMatches.push({
             id: `M-R${r}-C${c}-${Math.random().toString(36).substr(2, 4)}`,
             courtName: `Court ${c}`,
             round: r,
@@ -410,7 +437,19 @@ export function generateSchedule(
     }
   }
 
-  return matches;
+  return [...existingMatches, ...newMatches];
+}
+
+/**
+ * Generates an event schedule based on player list and tournament configuration
+ */
+export function generateSchedule(
+  players: Player[],
+  config: TournamentConfig,
+  roundsCount: number,
+  playerPointsMap?: Record<string, number>
+): Match[] {
+  return generateAdditionalRounds(players, config, roundsCount, [], playerPointsMap);
 }
 
 /**

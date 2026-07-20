@@ -54,6 +54,61 @@ const app = express();
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ limit: "25mb", extended: true }));
 
+  // Check Supabase DB status & health
+  app.get("/api/db-status", async (req, res) => {
+    try {
+      const url = process.env.SUPABASE_URL;
+      const key = process.env.SUPABASE_KEY;
+      const supabase = getSupabase();
+
+      if (!url || !key) {
+        return res.json({
+          connected: false,
+          storage: "in-memory-fallback",
+          reason: "SUPABASE_URL or SUPABASE_KEY environment variable is not configured on the server.",
+          hint: "Add SUPABASE_URL and SUPABASE_KEY to Environment Variables in your server/Vercel settings."
+        });
+      }
+
+      if (!supabase) {
+        return res.json({
+          connected: false,
+          storage: "in-memory-fallback",
+          reason: "Failed to initialize Supabase client."
+        });
+      }
+
+      const { data, error } = await supabase
+        .from("padel_data")
+        .select("id, updated_at, data")
+        .eq("id", "active_state")
+        .maybeSingle();
+
+      if (error) {
+        return res.json({
+          connected: false,
+          storage: "in-memory-fallback",
+          reason: `Supabase database error: ${error.message} (Code: ${error.code})`,
+          hint: "Ensure table 'padel_data' exists with schema: CREATE TABLE padel_data (id text primary key, data jsonb, updated_at timestamptz) and RLS is disabled."
+        });
+      }
+
+      return res.json({
+        connected: true,
+        storage: "supabase",
+        hasState: !!data,
+        updatedAt: data?.updated_at || null,
+        eventsCount: data?.data?.events?.length || 0
+      });
+    } catch (err: any) {
+      return res.json({
+        connected: false,
+        storage: "in-memory-fallback",
+        reason: err?.message || "Failed to query Supabase database."
+      });
+    }
+  });
+
   // Get Padel Scheduler state (events and activeEventId)
   app.get("/api/events", async (req, res) => {
     try {
@@ -91,11 +146,29 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   // Save Padel Scheduler state (events and activeEventId)
   app.post("/api/events", async (req, res) => {
     try {
-      const { events, activeEventId } = req.body;
+      const { events, activeEventId, allowEmpty } = req.body;
+      if (!Array.isArray(events)) {
+        return res.status(400).json({ error: "Invalid payload: events must be an array." });
+      }
+
       const supabase = getSupabase();
       
       if (supabase) {
-        console.log("[Supabase] Saving padel data...");
+        // Safety protection: Do not overwrite non-empty DB data with an empty array unless allowEmpty is true
+        if (events.length === 0 && !allowEmpty) {
+          const { data: existing } = await supabase
+            .from("padel_data")
+            .select("data")
+            .eq("id", "active_state")
+            .maybeSingle();
+
+          if (existing?.data?.events && existing.data.events.length > 0) {
+            console.warn("[Supabase Protection] Ignored empty save request to prevent overwriting existing data.");
+            return res.json({ success: true, protected: true, existingCount: existing.data.events.length });
+          }
+        }
+
+        console.log(`[Supabase] Saving padel data (${events.length} events)...`);
         const { error } = await supabase
           .from("padel_data")
           .upsert({
@@ -111,8 +184,13 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
         console.log("[Supabase] Save successful.");
         return res.json({ success: true });
       } else {
-        // Fallback to in-memory storage
-        console.log("[Memory Fallback] Saving to in-memory padel data...");
+        // Fallback to in-memory storage with safety protection
+        if (events.length === 0 && !allowEmpty && inMemoryPadelData.events.length > 0) {
+          console.warn("[Memory Protection] Ignored empty save request to prevent overwriting existing in-memory data.");
+          return res.json({ success: true, protected: true });
+        }
+
+        console.log(`[Memory Fallback] Saving to in-memory padel data (${events.length} events)...`);
         inMemoryPadelData = { events, activeEventId };
         return res.json({ success: true });
       }
@@ -1025,7 +1103,7 @@ CRITICAL EXTRACTION RULES:
   async function initServer() {
     if (!process.env.VERCEL) {
       if (process.env.NODE_ENV !== "production") {
-        const { createServer as createViteServer } = await import("vite");
+        const { createServer: createViteServer } = require("vite");
         const vite = await createViteServer({
           server: { middlewareMode: true },
           appType: "spa",

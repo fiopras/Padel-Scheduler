@@ -32,6 +32,7 @@ interface EventManagerProps {
   }) => void;
   allSystemPlayers: Player[];
   onGenerateMatches: () => void;
+  onAddRounds?: (count: number) => void;
   config: TournamentConfig;
   roundsCount: number;
   onChangeConfig: (newConfig: TournamentConfig) => void;
@@ -48,6 +49,7 @@ export default function EventManager({
   onCreateEvent,
   allSystemPlayers,
   onGenerateMatches,
+  onAddRounds,
   config,
   roundsCount,
   onChangeConfig,
@@ -238,6 +240,41 @@ export default function EventManager({
                         Jadwal Aktif: {matches.length} Laga
                       </span>
                       
+                      {onAddRounds && (
+                        <div className="flex items-center gap-1 bg-teal-950/40 border border-teal-500/30 p-1 rounded-xl">
+                          <span className="text-[10px] text-teal-300 font-black font-display uppercase px-2 flex items-center gap-1">
+                            <Plus className="w-3 h-3 text-teal-400" /> Putaran:
+                          </span>
+                          <button
+                            type="button"
+                            id="btn-evt-add-1round"
+                            onClick={() => onAddRounds(1)}
+                            className="px-2.5 py-1 bg-teal-400 hover:bg-teal-300 active:scale-95 text-slate-950 font-black text-[10px] rounded-lg transition-all font-mono cursor-pointer shadow-sm"
+                            title="Tambah 1 Putaran (Round) Baru"
+                          >
+                            +1 Round
+                          </button>
+                          <button
+                            type="button"
+                            id="btn-evt-add-2round"
+                            onClick={() => onAddRounds(2)}
+                            className="px-2.5 py-1 bg-teal-500/20 hover:bg-teal-500/40 text-teal-300 font-extrabold text-[10px] rounded-lg transition-all font-mono cursor-pointer border border-teal-500/30"
+                            title="Tambah 2 Putaran (Round) Baru"
+                          >
+                            +2
+                          </button>
+                          <button
+                            type="button"
+                            id="btn-evt-add-3round"
+                            onClick={() => onAddRounds(3)}
+                            className="px-2.5 py-1 bg-teal-500/20 hover:bg-teal-500/40 text-teal-300 font-extrabold text-[10px] rounded-lg transition-all font-mono cursor-pointer border border-teal-500/30"
+                            title="Tambah 3 Putaran (Round) Baru"
+                          >
+                            +3
+                          </button>
+                        </div>
+                      )}
+
                       <button
                         type="button"
                         id="btn-evt-regenerate-prompt"

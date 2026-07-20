@@ -38,6 +38,7 @@ interface MatchListProps {
   onUpdateScore: (matchId: string, score1: number, score2: number) => void;
   onSetStatus: (matchId: string, status: 'Scheduled' | 'In Progress' | 'Completed') => void;
   onResetMatch: (matchId: string) => void;
+  onAddRounds?: (count: number) => void;
   scoringType?: 'BestOf' | 'RaceTo';
   scoringValue?: number;
 }
@@ -48,6 +49,7 @@ export default function MatchList({
   onUpdateScore,
   onSetStatus,
   onResetMatch,
+  onAddRounds,
   scoringType = 'BestOf',
   scoringValue = 4
 }: MatchListProps) {
@@ -167,6 +169,17 @@ export default function MatchList({
                 Round {round}
               </button>
             ))}
+
+            {onAddRounds && (
+              <button
+                id="btn-matchlist-add-round"
+                onClick={() => onAddRounds(1)}
+                className="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/30 transition-all shrink-0 font-display flex items-center gap-1.5 active:scale-95 cursor-pointer ml-auto"
+                title="Tambah 1 Putaran (Round) Baru ke Jadwal Aktif"
+              >
+                <Plus className="w-3.5 h-3.5" /> + Tambah Round
+              </button>
+            )}
           </div>
         )}
       </div>

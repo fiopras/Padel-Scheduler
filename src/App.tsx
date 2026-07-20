@@ -21,10 +21,11 @@ import {
   Moon,
   Cloud,
   CloudOff,
-  RefreshCw
+  RefreshCw,
+  Check
 } from 'lucide-react';
 import { Player, Match, TournamentConfig, GenderType, SkillLevelType, TournamentFormat, ScoringType, PadelEvent } from './types';
-import { generateSchedule, recalculateLeaderboard } from './utils/scheduler';
+import { generateSchedule, generateAdditionalRounds, recalculateLeaderboard } from './utils/scheduler';
 import {
   parsePlayersFromExcel,
   exportScheduleToExcel,
@@ -173,8 +174,17 @@ export default function App() {
   });
   const [roundsCount, setRoundsCount] = React.useState<number>(3);
 
-  // State to track synchronization status
+  // State to track synchronization status & DB connection details
   const [syncStatus, setSyncStatus] = React.useState<'loading' | 'synced' | 'saving' | 'error'>('loading');
+  const [dbDetails, setDbDetails] = React.useState<{
+    connected: boolean;
+    storage: string;
+    reason?: string;
+    hint?: string;
+  }>({ connected: false, storage: 'loading' });
+
+  const [showDbSetupModal, setShowDbSetupModal] = React.useState(false);
+  const initialLoadDoneRef = React.useRef(false);
 
   // Event History and active event
   const [events, setEvents] = React.useState<PadelEvent[]>([]);
@@ -214,20 +224,39 @@ export default function App() {
     }, 4000);
   };
 
+  // Check DB status on startup
+  const checkDbHealth = async () => {
+    try {
+      const res = await fetch('/api/db-status');
+      if (res.ok) {
+        const info = await res.json();
+        setDbDetails(info);
+      }
+    } catch (e) {
+      console.warn("Failed to fetch DB status:", e);
+    }
+  };
+
   // Load initial data from the database
   React.useEffect(() => {
     async function loadData() {
       try {
         setSyncStatus('loading');
+        await checkDbHealth();
+
         const res = await fetch('/api/events');
         if (!res.ok) throw new Error("Server error loading data");
         const data = await res.json();
         
         if (data && Array.isArray(data.events)) {
-          setEvents(data.events);
-          if (data.activeEventId) {
-            setActiveEventId(data.activeEventId);
-            loadedEventIdRef.current = data.activeEventId;
+          if (data.events.length > 0) {
+            setEvents(data.events);
+            if (data.activeEventId) {
+              setActiveEventId(data.activeEventId);
+              loadedEventIdRef.current = data.activeEventId;
+            }
+          } else {
+            loadLocalStorageFallback();
           }
           setSyncStatus('synced');
         } else {
@@ -237,6 +266,8 @@ export default function App() {
         console.error("Failed to fetch events from server, falling back to local storage:", e);
         loadLocalStorageFallback();
         setSyncStatus('error');
+      } finally {
+        initialLoadDoneRef.current = true;
       }
     }
 
@@ -246,7 +277,7 @@ export default function App() {
         const activeId = localStorage.getItem('court_master_active_event_id');
         if (saved) {
           const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed)) {
+          if (Array.isArray(parsed) && parsed.length > 0) {
             setEvents(parsed);
             if (activeId) {
               setActiveEventId(activeId);
@@ -261,9 +292,42 @@ export default function App() {
     loadData();
   }, []);
 
-  // Seed initial events if none exist and we have finished loading
+  // Background real-time sync polling (runs every 8 seconds when window is active)
   React.useEffect(() => {
-    if (syncStatus !== 'synced') return; // Wait until initial sync loads
+    if (!initialLoadDoneRef.current) return;
+
+    const interval = setInterval(async () => {
+      try {
+        if (document.visibilityState !== 'visible') return;
+
+        const res = await fetch('/api/events');
+        if (!res.ok) return;
+        const data = await res.json();
+
+        if (data && Array.isArray(data.events) && data.events.length > 0) {
+          const remoteStr = JSON.stringify(data.events);
+          const localStr = JSON.stringify(events);
+
+          if (remoteStr !== localStr) {
+            console.log("[Realtime Sync] Incoming remote updates detected, updating state...");
+            setEvents(data.events);
+            if (data.activeEventId && data.activeEventId !== activeEventId) {
+              setActiveEventId(data.activeEventId);
+              loadedEventIdRef.current = data.activeEventId;
+            }
+          }
+        }
+      } catch (e) {
+        // Silent background catch
+      }
+    }, 8000);
+
+    return () => clearInterval(interval);
+  }, [events, activeEventId]);
+
+  // Seed initial events if none exist and initial load is 100% complete
+  React.useEffect(() => {
+    if (!initialLoadDoneRef.current || syncStatus === 'loading') return;
     if (events.length === 0) {
       const defaultEvent: PadelEvent = {
         id: 'evt-seed',
@@ -293,7 +357,7 @@ export default function App() {
 
   // Auto-save events and activeEventId to the database whenever they change
   React.useEffect(() => {
-    if (syncStatus === 'loading') return;
+    if (!initialLoadDoneRef.current || syncStatus === 'loading') return;
 
     const timer = setTimeout(async () => {
       try {
@@ -475,6 +539,38 @@ export default function App() {
     setMatches(newMatches);
     setActiveTab('matches');
     showNotification(`Jadwal baru berhasil dibuat! ${roundsCount} Round, total ${newMatches.length} Match.`);
+  };
+
+  // Add extra rounds to current schedule without destroying existing matches
+  const handleAddRounds = (additionalRounds: number = 1) => {
+    if (players.length < 2) {
+      showNotification('Dibutuhkan minimal 2 atlet untuk menambah putaran tanding.', 'error');
+      return;
+    }
+    if (config.format === 'Doubles' && players.length < 4) {
+      showNotification('Dibutuhkan minimal 4 atlet untuk format ganda (Doubles).', 'error');
+      return;
+    }
+    if (additionalRounds <= 0) return;
+
+    // Build points map from dynamic leaderboard
+    const playerPointsMap: Record<string, number> = {};
+    currentLeaderboard.forEach((p) => {
+      playerPointsMap[p.id] = p.points || 0;
+    });
+
+    const updatedMatches = generateAdditionalRounds(players, config, additionalRounds, matches, playerPointsMap);
+    const addedMatchesCount = updatedMatches.length - matches.length;
+
+    if (addedMatchesCount === 0) {
+      showNotification('Gagal merumuskan pertambahan round.', 'error');
+      return;
+    }
+
+    const newMaxRound = updatedMatches.reduce((max, m) => Math.max(max, m.round), 0);
+    setRoundsCount(newMaxRound);
+    setMatches(updatedMatches);
+    showNotification(`Berhasil menambahkan ${additionalRounds} Round baru (${addedMatchesCount} pertandingan)! Total kini: ${newMaxRound} Round.`, 'success');
   };
 
   // Manual player addition
@@ -793,24 +889,47 @@ export default function App() {
                 
                 {/* Cloud Sync Status Indicator */}
                 {syncStatus === 'loading' && (
-                  <span className="text-[9px] bg-blue-500/10 text-blue-400 py-1 px-1.5 rounded font-semibold border border-blue-500/20 tracking-wide flex items-center gap-1">
-                    <RefreshCw className="w-2.5 h-2.5 animate-spin" /> Loading
-                  </span>
+                  <button
+                    onClick={() => setShowDbSetupModal(true)}
+                    className="text-[9px] bg-blue-500/10 text-blue-400 py-1 px-2 rounded-full font-semibold border border-blue-500/20 tracking-wide flex items-center gap-1 cursor-pointer"
+                  >
+                    <RefreshCw className="w-2.5 h-2.5 animate-spin" /> Checking DB...
+                  </button>
                 )}
                 {syncStatus === 'saving' && (
-                  <span className="text-[9px] bg-amber-500/10 text-amber-400 py-1 px-1.5 rounded font-semibold border border-amber-500/20 tracking-wide flex items-center gap-1">
+                  <button
+                    onClick={() => setShowDbSetupModal(true)}
+                    className="text-[9px] bg-amber-500/10 text-amber-400 py-1 px-2 rounded-full font-semibold border border-amber-500/20 tracking-wide flex items-center gap-1 cursor-pointer"
+                  >
                     <RefreshCw className="w-2.5 h-2.5 animate-spin" /> Menyimpan...
-                  </span>
+                  </button>
                 )}
-                {syncStatus === 'synced' && (
-                  <span className="text-[9px] bg-emerald-500/10 text-emerald-400 py-1 px-1.5 rounded font-semibold border border-emerald-500/20 tracking-wide flex items-center gap-1" title="Data tersimpan di Cloud Database (Supabase)">
-                    <Cloud className="w-2.5 h-2.5 text-emerald-400" /> Synced
-                  </span>
+                {syncStatus === 'synced' && dbDetails.connected && (
+                  <button
+                    onClick={() => setShowDbSetupModal(true)}
+                    className="text-[9px] bg-emerald-500/10 text-emerald-400 py-1 px-2 rounded-full font-extrabold border border-emerald-500/25 tracking-wide flex items-center gap-1 cursor-pointer hover:bg-emerald-500/20 transition-all font-mono"
+                    title="Terhubung ke Supabase Cloud DB (Klik untuk info)"
+                  >
+                    <Cloud className="w-2.5 h-2.5 text-emerald-400" /> Supabase Cloud
+                  </button>
+                )}
+                {syncStatus === 'synced' && !dbDetails.connected && (
+                  <button
+                    onClick={() => setShowDbSetupModal(true)}
+                    className="text-[9px] bg-amber-500/10 text-amber-300 py-1 px-2 rounded-full font-extrabold border border-amber-500/30 tracking-wide flex items-center gap-1 cursor-pointer hover:bg-amber-500/20 transition-all font-mono"
+                    title="Penyimpanan Lokal / Memory (Klik untuk instruksi Supabase)"
+                  >
+                    <CloudOff className="w-2.5 h-2.5 text-amber-400" /> Local Fallback
+                  </button>
                 )}
                 {syncStatus === 'error' && (
-                  <span className="text-[9px] bg-rose-500/10 text-rose-400 py-1 px-1.5 rounded font-semibold border border-rose-500/20 tracking-wide flex items-center gap-1" title="Gagal terhubung ke Cloud. Menggunakan penyimpanan lokal.">
+                  <button
+                    onClick={() => setShowDbSetupModal(true)}
+                    className="text-[9px] bg-rose-500/10 text-rose-400 py-1 px-2 rounded-full font-semibold border border-rose-500/20 tracking-wide flex items-center gap-1 cursor-pointer hover:bg-rose-500/20 transition-all"
+                    title="Gagal terhubung ke Cloud (Klik untuk info)"
+                  >
                     <CloudOff className="w-2.5 h-2.5 text-rose-400" /> Offline
-                  </span>
+                  </button>
                 )}
               </h1>
               <p className="text-[9px] text-[#94A3B8] font-bold tracking-widest uppercase mt-1.5 font-mono">Excel Sports Scheduler & Analyst</p>
@@ -1106,6 +1225,7 @@ export default function App() {
                   onCreateEvent={handleCreateEvent}
                   allSystemPlayers={players}
                   onGenerateMatches={handleGenerateMatches}
+                  onAddRounds={handleAddRounds}
                   config={config}
                   roundsCount={roundsCount}
                   onChangeConfig={setConfig}
@@ -1164,6 +1284,7 @@ export default function App() {
                   onUpdateScore={handleUpdateScore}
                   onSetStatus={handleSetStatus}
                   onResetMatch={handleResetMatch}
+                  onAddRounds={handleAddRounds}
                   scoringType={config.scoringType}
                   scoringValue={config.scoringValue}
                 />
@@ -1225,6 +1346,114 @@ export default function App() {
                   className="flex-1 py-2.5 bg-rose-500 hover:bg-rose-600 active:scale-95 text-white text-xs font-black rounded-xl transition-all shadow-lg shadow-rose-500/15 cursor-pointer uppercase tracking-wider"
                 >
                   Ya, Setuju
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Supabase DB Health & Diagnostics Modal */}
+      <AnimatePresence>
+        {showDbSetupModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowDbSetupModal(false)}
+              className="absolute inset-0 bg-slate-950/80 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-[#0B1220]/95 border border-slate-800 rounded-3xl p-6 max-w-lg w-full relative z-10 shadow-2xl space-y-4 ring-1 ring-white/5 max-h-[90vh] overflow-y-auto"
+            >
+              <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+                <div className="flex items-center gap-2">
+                  <div className={`p-2 rounded-xl border ${
+                    dbDetails.connected ? 'bg-emerald-500/10 border-emerald-500/25 text-emerald-400' : 'bg-amber-500/10 border-amber-500/25 text-amber-400'
+                  }`}>
+                    {dbDetails.connected ? <Cloud className="w-5 h-5" /> : <CloudOff className="w-5 h-5" />}
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-black text-white uppercase tracking-wider font-display">
+                      Status Database Supabase
+                    </h3>
+                    <span className="text-[10px] font-mono text-slate-400">
+                      Modul Sinkronisasi Cloud Realtime
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowDbSetupModal(false)}
+                  className="p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-all"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Status details card */}
+              <div className="space-y-3 text-xs">
+                <div className="p-3.5 rounded-2xl bg-slate-950 border border-slate-850 space-y-2 font-mono">
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Koneksi Supabase:</span>
+                    <span className={`font-black ${dbDetails.connected ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {dbDetails.connected ? '🟢 TERHUBUNG (CONNECTED)' : '🟡 UNCONNECTED / FALLBACK'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="text-slate-400">Tipe Penyimpanan:</span>
+                    <span className="text-slate-200 font-bold uppercase">{dbDetails.storage}</span>
+                  </div>
+                  {dbDetails.reason && (
+                    <div className="pt-2 border-t border-slate-900 text-[11px] text-amber-300">
+                      <b>Keterangan:</b> {dbDetails.reason}
+                    </div>
+                  )}
+                </div>
+
+                {!dbDetails.connected && (
+                  <div className="p-4 rounded-2xl bg-amber-950/20 border border-amber-500/20 text-amber-200 space-y-3">
+                    <div className="font-bold flex items-center gap-1.5 text-xs text-amber-300">
+                      <Info className="w-4 h-4" /> Instruksi Setup Tabel Supabase SQL
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Jika Supabase sudah diberi `SUPABASE_URL` &amp; `SUPABASE_KEY` tetapi status masih belum terhubung, pastikan tabel <b>`padel_data`</b> sudah dibuat di <b>Supabase SQL Editor</b> dengan script ini:
+                    </p>
+
+                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-[10px] font-mono text-teal-300 select-all overflow-x-auto">
+                      <pre>{`CREATE TABLE IF NOT EXISTS padel_data (
+  id TEXT PRIMARY KEY,
+  data JSONB NOT NULL,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+ALTER TABLE padel_data DISABLE ROW LEVEL SECURITY;`}</pre>
+                    </div>
+                  </div>
+                )}
+
+                {dbDetails.connected && (
+                  <div className="p-4 rounded-2xl bg-emerald-950/20 border border-emerald-500/20 text-emerald-200 text-xs space-y-1">
+                    <p className="font-bold flex items-center gap-1.5 text-emerald-300">
+                      <Check className="w-4 h-4 text-emerald-400 stroke-[3]" /> Supabase Beroperasi Sempurna
+                    </p>
+                    <p className="text-[11px] text-slate-300">
+                      Seluruh browser yang membuka link aplikasi ini secara otomatis tersinkronisasi dan tidak akan kehilangan data event saat halaman di-refresh.
+                    </p>
+                  </div>
+                )}
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDbSetupModal(false)}
+                  className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-black rounded-xl transition-all cursor-pointer uppercase tracking-wider border border-slate-800"
+                >
+                  Tutup Info
                 </button>
               </div>
             </motion.div>
