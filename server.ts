@@ -203,8 +203,633 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
     }
   });
 
+  // ============================================================
+  // COTTA FINANCE API ROUTES
+  // ============================================================
+
+  /** Helper: generate a short unique ID */
+  function genId(prefix: string): string {
+    return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+  }
+
+  /** Helper: write an audit log entry (best-effort, non-blocking) */
+  async function writeAuditLog(
+    supabase: any,
+    tableName: string,
+    recordId: string,
+    action: string,
+    oldData: any,
+    newData: any
+  ) {
+    try {
+      await supabase.from("finance_audit_log").insert({
+        id: genId("aud"),
+        table_name: tableName,
+        record_id: recordId,
+        action,
+        old_data: oldData || null,
+        new_data: newData || null,
+        performed_by: "admin",
+        performed_at: new Date().toISOString(),
+      });
+    } catch (e) {
+      // non-blocking
+    }
+  }
+
+  // ----------------------------------------------------------
+  // GET /api/finance/events — List all finance events
+  // ----------------------------------------------------------
+  app.get("/api/finance/events", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.json({ events: [] });
+
+      const { data, error } = await supabase
+        .from("finance_events")
+        .select("*")
+        .order("session_date", { ascending: false });
+
+      if (error) {
+        console.warn("[Finance] Error fetching events:", error.message);
+        return res.status(500).json({ error: error.message });
+      }
+      return res.json({ events: data || [] });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // POST /api/finance/events — Create a new finance event
+  // ----------------------------------------------------------
+  app.post("/api/finance/events", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
+
+      const { event_id, event_name, session_date, court_fee, additional_fee, tax_type, tax_value, discount, notes } = req.body;
+      if (!event_id || !event_name) {
+        return res.status(400).json({ error: "event_id and event_name are required" });
+      }
+
+      const subtotal = (parseFloat(court_fee) || 0) + (parseFloat(additional_fee) || 0);
+      const taxAmount = tax_type === "percentage"
+        ? subtotal * ((parseFloat(tax_value) || 0) / 100)
+        : (parseFloat(tax_value) || 0);
+      const finalTotal = subtotal + taxAmount - (parseFloat(discount) || 0);
+
+      const id = genId("fe");
+      const record = {
+        id,
+        event_id,
+        event_name,
+        session_date: session_date || new Date().toISOString().split("T")[0],
+        court_fee: parseFloat(court_fee) || 0,
+        additional_fee: parseFloat(additional_fee) || 0,
+        tax_type: tax_type || "percentage",
+        tax_value: parseFloat(tax_value) || 0,
+        discount: parseFloat(discount) || 0,
+        final_total: Math.max(0, finalTotal),
+        notes: notes || null,
+        status: "draft",
+        created_by: "admin",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase.from("finance_events").insert(record);
+      if (error) return res.status(500).json({ error: error.message });
+
+      await writeAuditLog(supabase, "finance_events", id, "create", null, record);
+      return res.json({ success: true, id });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // GET /api/finance/events/:id — Get single finance event
+  // ----------------------------------------------------------
+  app.get("/api/finance/events/:id", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
+
+      const { data, error } = await supabase
+        .from("finance_events")
+        .select("*")
+        .eq("id", req.params.id)
+        .maybeSingle();
+
+      if (error) return res.status(500).json({ error: error.message });
+      if (!data) return res.status(404).json({ error: "Finance event not found" });
+      return res.json({ event: data });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // PUT /api/finance/events/:id — Update finance event
+  // ----------------------------------------------------------
+  app.put("/api/finance/events/:id", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
+
+      const { court_fee, additional_fee, tax_type, tax_value, discount, notes, status, event_name, session_date } = req.body;
+
+      // Fetch old record for audit
+      const { data: oldRecord } = await supabase
+        .from("finance_events")
+        .select("*")
+        .eq("id", req.params.id)
+        .maybeSingle();
+
+      const subtotal = (parseFloat(court_fee) || 0) + (parseFloat(additional_fee) || 0);
+      const taxAmount = tax_type === "percentage"
+        ? subtotal * ((parseFloat(tax_value) || 0) / 100)
+        : (parseFloat(tax_value) || 0);
+      const finalTotal = subtotal + taxAmount - (parseFloat(discount) || 0);
+
+      const updates: any = {
+        court_fee: parseFloat(court_fee) || 0,
+        additional_fee: parseFloat(additional_fee) || 0,
+        tax_type: tax_type || "percentage",
+        tax_value: parseFloat(tax_value) || 0,
+        discount: parseFloat(discount) || 0,
+        final_total: Math.max(0, finalTotal),
+        notes: notes ?? oldRecord?.notes,
+        updated_at: new Date().toISOString(),
+      };
+      if (status) updates.status = status;
+      if (event_name) updates.event_name = event_name;
+      if (session_date) updates.session_date = session_date;
+
+      const { error } = await supabase.from("finance_events").update(updates).eq("id", req.params.id);
+      if (error) return res.status(500).json({ error: error.message });
+
+      await writeAuditLog(supabase, "finance_events", req.params.id, "update", oldRecord, updates);
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // DELETE /api/finance/events/:id — Delete finance event
+  // ----------------------------------------------------------
+  app.delete("/api/finance/events/:id", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
+
+      const { data: oldRecord } = await supabase
+        .from("finance_events")
+        .select("*")
+        .eq("id", req.params.id)
+        .maybeSingle();
+
+      const { error } = await supabase.from("finance_events").delete().eq("id", req.params.id);
+      if (error) return res.status(500).json({ error: error.message });
+
+      await writeAuditLog(supabase, "finance_events", req.params.id, "delete", oldRecord, null);
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // GET /api/finance/events/:id/participants — Get participants
+  // ----------------------------------------------------------
+  app.get("/api/finance/events/:id/participants", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.json({ participants: [] });
+
+      const { data, error } = await supabase
+        .from("finance_participants")
+        .select("*")
+        .eq("finance_event_id", req.params.id)
+        .order("player_name");
+
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ participants: data || [] });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // POST /api/finance/events/:id/participants — Bulk upsert participants
+  // ----------------------------------------------------------
+  app.post("/api/finance/events/:id/participants", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
+
+      const { participants } = req.body;
+      if (!Array.isArray(participants)) {
+        return res.status(400).json({ error: "participants must be an array" });
+      }
+
+      // Delete all existing participants for this event then re-insert
+      await supabase.from("finance_participants").delete().eq("finance_event_id", req.params.id);
+
+      if (participants.length > 0) {
+        const records = participants.map((p: any) => ({
+          id: p.id || genId("fp"),
+          finance_event_id: req.params.id,
+          player_id: p.player_id,
+          player_name: p.player_name,
+          attendance_status: p.attendance_status || "hadir",
+          split_type: p.split_type || "equal",
+          custom_amount: parseFloat(p.custom_amount) || 0,
+          final_charge: parseFloat(p.final_charge) || 0,
+          created_at: p.created_at || new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }));
+
+        const { error } = await supabase.from("finance_participants").insert(records);
+        if (error) return res.status(500).json({ error: error.message });
+      }
+
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // GET /api/finance/payments?event_id=xxx — Get payments
+  // ----------------------------------------------------------
+  app.get("/api/finance/payments", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.json({ payments: [] });
+
+      let query = supabase
+        .from("finance_payments")
+        .select("*")
+        .order("payment_date", { ascending: false });
+
+      if (req.query.event_id) {
+        query = query.eq("finance_event_id", req.query.event_id as string);
+      }
+      if (req.query.player_id) {
+        query = query.eq("player_id", req.query.player_id as string);
+      }
+
+      const { data, error } = await query;
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ payments: data || [] });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // POST /api/finance/payments — Record a payment
+  // ----------------------------------------------------------
+  app.post("/api/finance/payments", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
+
+      const { finance_event_id, player_id, player_name, amount, payment_date, payment_method, notes, proof_url } = req.body;
+      if (!finance_event_id || !player_id || !amount) {
+        return res.status(400).json({ error: "finance_event_id, player_id, and amount are required" });
+      }
+
+      const id = genId("pay");
+      const record = {
+        id,
+        finance_event_id,
+        player_id,
+        player_name,
+        amount: parseFloat(amount),
+        payment_date: payment_date || new Date().toISOString().split("T")[0],
+        payment_method: payment_method || "transfer",
+        notes: notes || null,
+        proof_url: proof_url || null,
+        recorded_by: "admin",
+        created_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase.from("finance_payments").insert(record);
+      if (error) return res.status(500).json({ error: error.message });
+
+      // Auto-create corresponding cash transaction income entry
+      await supabase.from("finance_cash_transactions").insert({
+        id: genId("cash"),
+        transaction_date: record.payment_date,
+        type: "income",
+        category: "member_payment",
+        description: `Pembayaran dari ${player_name}`,
+        amount: parseFloat(amount),
+        finance_event_id,
+        reference_id: id,
+        recorded_by: "admin",
+        created_at: new Date().toISOString(),
+      });
+
+      await writeAuditLog(supabase, "finance_payments", id, "create", null, record);
+      return res.json({ success: true, id });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // DELETE /api/finance/payments/:id — Delete a payment
+  // ----------------------------------------------------------
+  app.delete("/api/finance/payments/:id", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
+
+      const { data: oldRecord } = await supabase
+        .from("finance_payments")
+        .select("*")
+        .eq("id", req.params.id)
+        .maybeSingle();
+
+      const { error } = await supabase.from("finance_payments").delete().eq("id", req.params.id);
+      if (error) return res.status(500).json({ error: error.message });
+
+      // Remove corresponding auto-generated cash transaction
+      if (oldRecord) {
+        await supabase.from("finance_cash_transactions").delete().eq("reference_id", req.params.id);
+      }
+
+      await writeAuditLog(supabase, "finance_payments", req.params.id, "delete", oldRecord, null);
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // GET /api/finance/cash — Get cash transactions
+  // ----------------------------------------------------------
+  app.get("/api/finance/cash", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.json({ transactions: [] });
+
+      let query = supabase
+        .from("finance_cash_transactions")
+        .select("*")
+        .order("transaction_date", { ascending: false });
+
+      if (req.query.type) query = query.eq("type", req.query.type as string);
+
+      const { data, error } = await query;
+      if (error) return res.status(500).json({ error: error.message });
+      return res.json({ transactions: data || [] });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // POST /api/finance/cash — Add manual cash transaction
+  // ----------------------------------------------------------
+  app.post("/api/finance/cash", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
+
+      const { transaction_date, type, category, description, amount, finance_event_id } = req.body;
+      if (!type || !category || !description || !amount) {
+        return res.status(400).json({ error: "type, category, description, amount are required" });
+      }
+
+      const id = genId("cash");
+      const record = {
+        id,
+        transaction_date: transaction_date || new Date().toISOString().split("T")[0],
+        type,
+        category,
+        description,
+        amount: parseFloat(amount),
+        finance_event_id: finance_event_id || null,
+        reference_id: null,
+        recorded_by: "admin",
+        created_at: new Date().toISOString(),
+      };
+
+      const { error } = await supabase.from("finance_cash_transactions").insert(record);
+      if (error) return res.status(500).json({ error: error.message });
+
+      await writeAuditLog(supabase, "finance_cash_transactions", id, "create", null, record);
+      return res.json({ success: true, id });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // DELETE /api/finance/cash/:id — Delete cash transaction
+  // ----------------------------------------------------------
+  app.delete("/api/finance/cash/:id", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
+
+      const { data: oldRecord } = await supabase
+        .from("finance_cash_transactions")
+        .select("*")
+        .eq("id", req.params.id)
+        .maybeSingle();
+
+      const { error } = await supabase.from("finance_cash_transactions").delete().eq("id", req.params.id);
+      if (error) return res.status(500).json({ error: error.message });
+
+      await writeAuditLog(supabase, "finance_cash_transactions", req.params.id, "delete", oldRecord, null);
+      return res.json({ success: true });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // GET /api/finance/balance — All members balance summary
+  // ----------------------------------------------------------
+  app.get("/api/finance/balance", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.json({ balances: [] });
+
+      const { data: participants } = await supabase
+        .from("finance_participants")
+        .select("player_id, player_name, final_charge, attendance_status");
+
+      const { data: payments } = await supabase
+        .from("finance_payments")
+        .select("player_id, player_name, amount");
+
+      const balanceMap: Record<string, any> = {};
+
+      (participants || []).forEach((p: any) => {
+        if (p.attendance_status !== "hadir") return;
+        if (!balanceMap[p.player_id]) {
+          balanceMap[p.player_id] = { player_id: p.player_id, player_name: p.player_name, total_sessions: 0, total_charged: 0, total_paid: 0 };
+        }
+        balanceMap[p.player_id].total_sessions += 1;
+        balanceMap[p.player_id].total_charged += parseFloat(p.final_charge) || 0;
+      });
+
+      (payments || []).forEach((pay: any) => {
+        if (!balanceMap[pay.player_id]) {
+          balanceMap[pay.player_id] = { player_id: pay.player_id, player_name: pay.player_name, total_sessions: 0, total_charged: 0, total_paid: 0 };
+        }
+        balanceMap[pay.player_id].total_paid += parseFloat(pay.amount) || 0;
+      });
+
+      const balances = Object.values(balanceMap).map((b: any) => ({
+        ...b,
+        outstanding: Math.max(0, b.total_charged - b.total_paid),
+        credit: Math.max(0, b.total_paid - b.total_charged),
+      }));
+
+      return res.json({ balances });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // GET /api/finance/dashboard — Dashboard summary
+  // ----------------------------------------------------------
+  app.get("/api/finance/dashboard", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.json({ summary: {} });
+
+      const [eventsRes, cashRes, participantsRes, paymentsRes] = await Promise.all([
+        supabase.from("finance_events").select("id, final_total, status"),
+        supabase.from("finance_cash_transactions").select("type, amount, transaction_date"),
+        supabase.from("finance_participants").select("player_id, player_name, final_charge, attendance_status"),
+        supabase.from("finance_payments").select("player_id, player_name, amount, payment_date"),
+      ]);
+
+      const events = eventsRes.data || [];
+      const cashTx = cashRes.data || [];
+      const participants = participantsRes.data || [];
+      const payments = paymentsRes.data || [];
+
+      const totalIncome = cashTx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + parseFloat(t.amount), 0);
+      const totalExpense = cashTx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + parseFloat(t.amount), 0);
+
+      // Outstanding per player
+      const chargeMap: Record<string, number> = {};
+      const paidMap: Record<string, number> = {};
+      participants.forEach((p: any) => {
+        if (p.attendance_status === "hadir") {
+          chargeMap[p.player_id] = (chargeMap[p.player_id] || 0) + parseFloat(p.final_charge || 0);
+        }
+      });
+      payments.forEach((pay: any) => {
+        paidMap[pay.player_id] = (paidMap[pay.player_id] || 0) + parseFloat(pay.amount || 0);
+      });
+      const totalOutstanding = Object.keys(chargeMap).reduce((sum, pid) => {
+        return sum + Math.max(0, (chargeMap[pid] || 0) - (paidMap[pid] || 0));
+      }, 0);
+
+      // Monthly data (last 6 months)
+      const monthlyMap: Record<string, { income: number; expense: number }> = {};
+      cashTx.forEach((t: any) => {
+        const month = t.transaction_date?.substring(0, 7) || "unknown";
+        if (!monthlyMap[month]) monthlyMap[month] = { income: 0, expense: 0 };
+        if (t.type === "income") monthlyMap[month].income += parseFloat(t.amount);
+        else monthlyMap[month].expense += parseFloat(t.amount);
+      });
+      const monthlyData = Object.entries(monthlyMap)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .slice(-6)
+        .map(([month, data]) => ({ month, ...data }));
+
+      // Top payers
+      const playerPaidMap: Record<string, { player_name: string; total_paid: number; sessions: number }> = {};
+      payments.forEach((pay: any) => {
+        if (!playerPaidMap[pay.player_id]) {
+          playerPaidMap[pay.player_id] = { player_name: pay.player_name, total_paid: 0, sessions: 0 };
+        }
+        playerPaidMap[pay.player_id].total_paid += parseFloat(pay.amount);
+        playerPaidMap[pay.player_id].sessions += 1;
+      });
+      const topPayers = Object.values(playerPaidMap)
+        .sort((a, b) => b.total_paid - a.total_paid)
+        .slice(0, 10);
+
+      return res.json({
+        summary: {
+          total_cash: totalIncome - totalExpense,
+          total_income: totalIncome,
+          total_expense: totalExpense,
+          total_outstanding: totalOutstanding,
+          total_events: events.length,
+          total_revenue: events.reduce((s: number, e: any) => s + parseFloat(e.final_total || 0), 0),
+          monthly_data: monthlyData,
+          top_payers: topPayers,
+        }
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ----------------------------------------------------------
+  // GET /api/finance/reports — Reports with filters
+  // ----------------------------------------------------------
+  app.get("/api/finance/reports", async (req, res) => {
+    try {
+      const supabase = getSupabase();
+      if (!supabase) return res.json({ report: {} });
+
+      const { from_date, to_date, event_id, player_id } = req.query;
+
+      let eventsQuery = supabase.from("finance_events").select("*").order("session_date", { ascending: false });
+      let paymentsQuery = supabase.from("finance_payments").select("*").order("payment_date", { ascending: false });
+      let cashQuery = supabase.from("finance_cash_transactions").select("*").order("transaction_date", { ascending: false });
+
+      if (from_date) {
+        eventsQuery = eventsQuery.gte("session_date", from_date as string);
+        paymentsQuery = paymentsQuery.gte("payment_date", from_date as string);
+        cashQuery = cashQuery.gte("transaction_date", from_date as string);
+      }
+      if (to_date) {
+        eventsQuery = eventsQuery.lte("session_date", to_date as string);
+        paymentsQuery = paymentsQuery.lte("payment_date", to_date as string);
+        cashQuery = cashQuery.lte("transaction_date", to_date as string);
+      }
+      if (event_id) eventsQuery = eventsQuery.eq("id", event_id as string);
+      if (player_id) paymentsQuery = paymentsQuery.eq("player_id", player_id as string);
+
+      const [eventsRes, paymentsRes, cashRes] = await Promise.all([eventsQuery, paymentsQuery, cashQuery]);
+
+      return res.json({
+        report: {
+          events: eventsRes.data || [],
+          payments: paymentsRes.data || [],
+          cash_transactions: cashRes.data || [],
+        }
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: err?.message });
+    }
+  });
+
+  // ============================================================
+  // END COTTA FINANCE ROUTES
+  // ============================================================
+
   // Server-side AI Extraction API endpoint with multi-model fallback resiliency
   app.post("/api/extract-players", async (req, res) => {
+
     try {
       const { base64Data, mimeType } = req.body;
       if (!base64Data) {

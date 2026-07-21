@@ -71,3 +71,113 @@ export interface PadelEvent {
   partnerMap?: Record<string, string>;
   status?: 'Active' | 'Completed';
 }
+
+// ============================================================
+// COTTA FINANCE TYPES
+// ============================================================
+
+export type FinanceEventStatus = 'draft' | 'active' | 'completed';
+export type AttendanceStatus = 'hadir' | 'batal';
+export type SplitType = 'equal' | 'custom' | 'free';
+export type TaxType = 'percentage' | 'nominal';
+export type PaymentMethod = 'transfer' | 'cash' | 'other';
+export type CashTransactionType = 'income' | 'expense';
+export type CashCategory =
+  | 'court_fee'
+  | 'sponsor'
+  | 'bola'
+  | 'operasional'
+  | 'member_payment'
+  | 'other';
+
+export interface FinanceEvent {
+  id: string;
+  event_id: string;          // references PadelEvent.id
+  event_name: string;
+  session_date: string;      // ISO date string
+  court_fee: number;
+  additional_fee: number;
+  tax_type: TaxType;
+  tax_value: number;
+  discount: number;
+  final_total: number;       // calculated: (court_fee + additional_fee) + tax - discount
+  notes?: string;
+  status: FinanceEventStatus;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FinanceParticipant {
+  id: string;
+  finance_event_id: string;
+  player_id: string;
+  player_name: string;
+  attendance_status: AttendanceStatus;
+  split_type: SplitType;
+  custom_amount: number;
+  final_charge: number;      // calculated based on split_type
+  created_at: string;
+  updated_at: string;
+}
+
+export interface FinancePayment {
+  id: string;
+  finance_event_id: string;
+  player_id: string;
+  player_name: string;
+  amount: number;
+  payment_date: string;      // ISO date string
+  payment_method: PaymentMethod;
+  notes?: string;
+  proof_url?: string;
+  recorded_by: string;
+  created_at: string;
+}
+
+export interface FinanceCashTransaction {
+  id: string;
+  transaction_date: string;
+  type: CashTransactionType;
+  category: CashCategory;
+  description: string;
+  amount: number;
+  finance_event_id?: string;
+  reference_id?: string;
+  recorded_by: string;
+  created_at: string;
+}
+
+export interface FinanceAuditLog {
+  id: string;
+  table_name: string;
+  record_id: string;
+  action: 'create' | 'update' | 'delete';
+  old_data?: Record<string, unknown>;
+  new_data?: Record<string, unknown>;
+  performed_by: string;
+  performed_at: string;
+}
+
+/** Aggregated balance per player across all finance events */
+export interface MemberFinanceBalance {
+  player_id: string;
+  player_name: string;
+  total_sessions: number;
+  total_charged: number;
+  total_paid: number;
+  outstanding: number;      // total_charged - total_paid (if positive = debt)
+  credit: number;           // total_paid - total_charged (if positive = overpaid)
+}
+
+/** Dashboard summary aggregated data */
+export interface FinanceDashboardSummary {
+  total_cash: number;
+  total_income: number;
+  total_expense: number;
+  total_outstanding: number;
+  total_events: number;
+  total_revenue: number;
+  monthly_data: { month: string; income: number; expense: number }[];
+  top_payers: { player_name: string; total_paid: number; sessions: number }[];
+}

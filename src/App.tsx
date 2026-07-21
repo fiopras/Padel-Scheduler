@@ -40,6 +40,7 @@ import AnalyticsCharts from './components/AnalyticsCharts';
 import MatchList from './components/MatchList';
 import CourtFeeCalculator from './components/CourtFeeCalculator';
 import EventManager from './components/EventManager';
+import FinanceModule from './components/FinanceModule';
 import UserFlowWizard from './components/UserFlowWizard';
 
 // Seed Initial Data
@@ -138,7 +139,7 @@ const SEED_MATCHES: Match[] = [
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = React.useState<'dashboard' | 'events' | 'players' | 'matches' | 'leaderboard' | 'patungan'>('dashboard');
+  const [activeTab, setActiveTab] = React.useState<'dashboard' | 'events' | 'players' | 'matches' | 'leaderboard' | 'patungan' | 'finance'>('dashboard');
   const [theme, setTheme] = React.useState<'dark' | 'light'>(() => {
     return (localStorage.getItem('cotta_theme') as 'dark' | 'light') || 'dark';
   });
@@ -1182,6 +1183,19 @@ export default function App() {
               <Coins className="w-3.5 h-3.5 text-teal-400" />
               Patungan Lapangan
             </button>
+
+            <button
+              id="tab-btn-finance"
+              onClick={() => setActiveTab('finance')}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-2 font-display shrink-0 ${
+                activeTab === 'finance'
+                  ? 'bg-[#0B1C10] text-emerald-400 border border-emerald-500/25 shadow-lg shadow-emerald-500/8'
+                  : 'text-slate-450 hover:text-white'
+              }`}
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-emerald-400"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+              Cotta Finance
+            </button>
           </div>
 
           {/* Quick Excel Downloads */}
@@ -1326,6 +1340,14 @@ export default function App() {
 
               {activeTab === 'patungan' && (
                 <CourtFeeCalculator players={players} />
+              )}
+
+              {activeTab === 'finance' && (
+                <FinanceModule
+                  activeEvent={activeEventId ? events.find(e => e.id === activeEventId) || null : null}
+                  players={players}
+                  showNotification={showNotification}
+                />
               )}
             </>
           )}
