@@ -205,6 +205,9 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
 
   // ============================================================
   // COTTA FINANCE API ROUTES
+  // Uses padel_data JSONB table (proven working) to bypass
+  // PostgREST schema cache issues with new tables.
+  // Each finance collection stored as separate row by ID.
   // ============================================================
 
   /** Helper: generate a short unique ID */
@@ -212,17 +215,37 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
     return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
   }
 
-  /** Helper: write an audit log entry (best-effort, non-blocking) */
-  async function writeAuditLog(
-    supabase: any,
-    tableName: string,
-    recordId: string,
-    action: string,
-    oldData: any,
-    newData: any
-  ) {
+  /** Helper: read a JSONB collection from padel_data */
+  async function financeRead(supabase: any, key: string): Promise<any[]> {
     try {
-      await supabase.from("finance_audit_log").insert({
+      const { data, error } = await supabase
+        .from("padel_data")
+        .select("data")
+        .eq("id", key)
+        .maybeSingle();
+      if (error || !data) return [];
+      return Array.isArray(data.data) ? data.data : [];
+    } catch { return []; }
+  }
+
+  /** Helper: write (upsert) a JSONB collection to padel_data */
+  async function financeWrite(supabase: any, key: string, records: any[]): Promise<void> {
+    try {
+      await supabase.from("padel_data").upsert({
+        id: key,
+        data: records,
+        updated_at: new Date(),
+      });
+    } catch (e) {
+      console.warn(`[Finance] Write failed for key ${key}:`, e);
+    }
+  }
+
+  /** Helper: write an audit entry (best-effort) */
+  async function writeAuditLog(supabase: any, tableName: string, recordId: string, action: string, oldData: any, newData: any) {
+    try {
+      const logs = await financeRead(supabase, "finance_audit_log");
+      logs.unshift({
         id: genId("aud"),
         table_name: tableName,
         record_id: recordId,
@@ -232,36 +255,28 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
         performed_by: "admin",
         performed_at: new Date().toISOString(),
       });
-    } catch (e) {
-      // non-blocking
-    }
+      // Keep last 200 entries
+      await financeWrite(supabase, "finance_audit_log", logs.slice(0, 200));
+    } catch { /* non-blocking */ }
   }
 
   // ----------------------------------------------------------
-  // GET /api/finance/events — List all finance events
+  // GET /api/finance/events
   // ----------------------------------------------------------
   app.get("/api/finance/events", async (req, res) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return res.json({ events: [] });
-
-      const { data, error } = await supabase
-        .from("finance_events")
-        .select("*")
-        .order("session_date", { ascending: false });
-
-      if (error) {
-        console.warn("[Finance] Error fetching events:", error.message);
-        return res.status(500).json({ error: error.message });
-      }
-      return res.json({ events: data || [] });
+      const events = await financeRead(supabase, "finance_events");
+      const sorted = [...events].sort((a: any, b: any) => b.session_date?.localeCompare(a.session_date));
+      return res.json({ events: sorted });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message });
     }
   });
 
   // ----------------------------------------------------------
-  // POST /api/finance/events — Create a new finance event
+  // POST /api/finance/events
   // ----------------------------------------------------------
   app.post("/api/finance/events", async (req, res) => {
     try {
@@ -269,28 +284,24 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
       if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
 
       const { event_id, event_name, session_date, court_fee, additional_fee, tax_type, tax_value, discount, notes } = req.body;
-      if (!event_id || !event_name) {
-        return res.status(400).json({ error: "event_id and event_name are required" });
-      }
+      if (!event_id || !event_name) return res.status(400).json({ error: "event_id and event_name are required" });
 
       const subtotal = (parseFloat(court_fee) || 0) + (parseFloat(additional_fee) || 0);
       const taxAmount = tax_type === "percentage"
         ? subtotal * ((parseFloat(tax_value) || 0) / 100)
         : (parseFloat(tax_value) || 0);
-      const finalTotal = subtotal + taxAmount - (parseFloat(discount) || 0);
+      const finalTotal = Math.max(0, subtotal + taxAmount - (parseFloat(discount) || 0));
 
       const id = genId("fe");
       const record = {
-        id,
-        event_id,
-        event_name,
+        id, event_id, event_name,
         session_date: session_date || new Date().toISOString().split("T")[0],
         court_fee: parseFloat(court_fee) || 0,
         additional_fee: parseFloat(additional_fee) || 0,
         tax_type: tax_type || "percentage",
         tax_value: parseFloat(tax_value) || 0,
         discount: parseFloat(discount) || 0,
-        final_total: Math.max(0, finalTotal),
+        final_total: finalTotal,
         notes: notes || null,
         status: "draft",
         created_by: "admin",
@@ -298,9 +309,9 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
         updated_at: new Date().toISOString(),
       };
 
-      const { error } = await supabase.from("finance_events").insert(record);
-      if (error) return res.status(500).json({ error: error.message });
-
+      const events = await financeRead(supabase, "finance_events");
+      events.push(record);
+      await financeWrite(supabase, "finance_events", events);
       await writeAuditLog(supabase, "finance_events", id, "create", null, record);
       return res.json({ success: true, id });
     } catch (err: any) {
@@ -309,68 +320,58 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   });
 
   // ----------------------------------------------------------
-  // GET /api/finance/events/:id — Get single finance event
+  // GET /api/finance/events/:id
   // ----------------------------------------------------------
   app.get("/api/finance/events/:id", async (req, res) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
-
-      const { data, error } = await supabase
-        .from("finance_events")
-        .select("*")
-        .eq("id", req.params.id)
-        .maybeSingle();
-
-      if (error) return res.status(500).json({ error: error.message });
-      if (!data) return res.status(404).json({ error: "Finance event not found" });
-      return res.json({ event: data });
+      const events = await financeRead(supabase, "finance_events");
+      const event = events.find((e: any) => e.id === req.params.id);
+      if (!event) return res.status(404).json({ error: "Finance event not found" });
+      return res.json({ event });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message });
     }
   });
 
   // ----------------------------------------------------------
-  // PUT /api/finance/events/:id — Update finance event
+  // PUT /api/finance/events/:id
   // ----------------------------------------------------------
   app.put("/api/finance/events/:id", async (req, res) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
 
+      const events = await financeRead(supabase, "finance_events");
+      const idx = events.findIndex((e: any) => e.id === req.params.id);
+      if (idx === -1) return res.status(404).json({ error: "Finance event not found" });
+
+      const old = events[idx];
       const { court_fee, additional_fee, tax_type, tax_value, discount, notes, status, event_name, session_date } = req.body;
-
-      // Fetch old record for audit
-      const { data: oldRecord } = await supabase
-        .from("finance_events")
-        .select("*")
-        .eq("id", req.params.id)
-        .maybeSingle();
-
       const subtotal = (parseFloat(court_fee) || 0) + (parseFloat(additional_fee) || 0);
       const taxAmount = tax_type === "percentage"
         ? subtotal * ((parseFloat(tax_value) || 0) / 100)
         : (parseFloat(tax_value) || 0);
-      const finalTotal = subtotal + taxAmount - (parseFloat(discount) || 0);
+      const finalTotal = Math.max(0, subtotal + taxAmount - (parseFloat(discount) || 0));
 
-      const updates: any = {
-        court_fee: parseFloat(court_fee) || 0,
-        additional_fee: parseFloat(additional_fee) || 0,
-        tax_type: tax_type || "percentage",
-        tax_value: parseFloat(tax_value) || 0,
-        discount: parseFloat(discount) || 0,
-        final_total: Math.max(0, finalTotal),
-        notes: notes ?? oldRecord?.notes,
+      events[idx] = {
+        ...old,
+        court_fee: parseFloat(court_fee) ?? old.court_fee,
+        additional_fee: parseFloat(additional_fee) ?? old.additional_fee,
+        tax_type: tax_type ?? old.tax_type,
+        tax_value: parseFloat(tax_value) ?? old.tax_value,
+        discount: parseFloat(discount) ?? old.discount,
+        final_total: finalTotal,
+        notes: notes ?? old.notes,
+        status: status ?? old.status,
+        event_name: event_name ?? old.event_name,
+        session_date: session_date ?? old.session_date,
         updated_at: new Date().toISOString(),
       };
-      if (status) updates.status = status;
-      if (event_name) updates.event_name = event_name;
-      if (session_date) updates.session_date = session_date;
 
-      const { error } = await supabase.from("finance_events").update(updates).eq("id", req.params.id);
-      if (error) return res.status(500).json({ error: error.message });
-
-      await writeAuditLog(supabase, "finance_events", req.params.id, "update", oldRecord, updates);
+      await financeWrite(supabase, "finance_events", events);
+      await writeAuditLog(supabase, "finance_events", req.params.id, "update", old, events[idx]);
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message });
@@ -378,23 +379,25 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   });
 
   // ----------------------------------------------------------
-  // DELETE /api/finance/events/:id — Delete finance event
+  // DELETE /api/finance/events/:id
   // ----------------------------------------------------------
   app.delete("/api/finance/events/:id", async (req, res) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
 
-      const { data: oldRecord } = await supabase
-        .from("finance_events")
-        .select("*")
-        .eq("id", req.params.id)
-        .maybeSingle();
+      const events = await financeRead(supabase, "finance_events");
+      const old = events.find((e: any) => e.id === req.params.id);
+      const next = events.filter((e: any) => e.id !== req.params.id);
+      await financeWrite(supabase, "finance_events", next);
 
-      const { error } = await supabase.from("finance_events").delete().eq("id", req.params.id);
-      if (error) return res.status(500).json({ error: error.message });
+      // Also clean up participants and payments for this event
+      const parts = await financeRead(supabase, "finance_participants");
+      await financeWrite(supabase, "finance_participants", parts.filter((p: any) => p.finance_event_id !== req.params.id));
+      const pays = await financeRead(supabase, "finance_payments");
+      await financeWrite(supabase, "finance_payments", pays.filter((p: any) => p.finance_event_id !== req.params.id));
 
-      await writeAuditLog(supabase, "finance_events", req.params.id, "delete", oldRecord, null);
+      await writeAuditLog(supabase, "finance_events", req.params.id, "delete", old, null);
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message });
@@ -402,28 +405,23 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   });
 
   // ----------------------------------------------------------
-  // GET /api/finance/events/:id/participants — Get participants
+  // GET /api/finance/events/:id/participants
   // ----------------------------------------------------------
   app.get("/api/finance/events/:id/participants", async (req, res) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return res.json({ participants: [] });
-
-      const { data, error } = await supabase
-        .from("finance_participants")
-        .select("*")
-        .eq("finance_event_id", req.params.id)
-        .order("player_name");
-
-      if (error) return res.status(500).json({ error: error.message });
-      return res.json({ participants: data || [] });
+      const all = await financeRead(supabase, "finance_participants");
+      const filtered = all.filter((p: any) => p.finance_event_id === req.params.id)
+        .sort((a: any, b: any) => a.player_name?.localeCompare(b.player_name));
+      return res.json({ participants: filtered });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message });
     }
   });
 
   // ----------------------------------------------------------
-  // POST /api/finance/events/:id/participants — Bulk upsert participants
+  // POST /api/finance/events/:id/participants (bulk upsert)
   // ----------------------------------------------------------
   app.post("/api/finance/events/:id/participants", async (req, res) => {
     try {
@@ -431,31 +429,25 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
       if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
 
       const { participants } = req.body;
-      if (!Array.isArray(participants)) {
-        return res.status(400).json({ error: "participants must be an array" });
-      }
+      if (!Array.isArray(participants)) return res.status(400).json({ error: "participants must be an array" });
 
-      // Delete all existing participants for this event then re-insert
-      await supabase.from("finance_participants").delete().eq("finance_event_id", req.params.id);
+      // Read all participants, remove this event's, re-add updated
+      const all = await financeRead(supabase, "finance_participants");
+      const others = all.filter((p: any) => p.finance_event_id !== req.params.id);
+      const updated = participants.map((p: any) => ({
+        id: p.id || genId("fp"),
+        finance_event_id: req.params.id,
+        player_id: p.player_id,
+        player_name: p.player_name,
+        attendance_status: p.attendance_status || "hadir",
+        split_type: p.split_type || "equal",
+        custom_amount: parseFloat(p.custom_amount) || 0,
+        final_charge: parseFloat(p.final_charge) || 0,
+        created_at: p.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }));
 
-      if (participants.length > 0) {
-        const records = participants.map((p: any) => ({
-          id: p.id || genId("fp"),
-          finance_event_id: req.params.id,
-          player_id: p.player_id,
-          player_name: p.player_name,
-          attendance_status: p.attendance_status || "hadir",
-          split_type: p.split_type || "equal",
-          custom_amount: parseFloat(p.custom_amount) || 0,
-          final_charge: parseFloat(p.final_charge) || 0,
-          created_at: p.created_at || new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        }));
-
-        const { error } = await supabase.from("finance_participants").insert(records);
-        if (error) return res.status(500).json({ error: error.message });
-      }
-
+      await financeWrite(supabase, "finance_participants", [...others, ...updated]);
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message });
@@ -463,35 +455,24 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   });
 
   // ----------------------------------------------------------
-  // GET /api/finance/payments?event_id=xxx — Get payments
+  // GET /api/finance/payments
   // ----------------------------------------------------------
   app.get("/api/finance/payments", async (req, res) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return res.json({ payments: [] });
-
-      let query = supabase
-        .from("finance_payments")
-        .select("*")
-        .order("payment_date", { ascending: false });
-
-      if (req.query.event_id) {
-        query = query.eq("finance_event_id", req.query.event_id as string);
-      }
-      if (req.query.player_id) {
-        query = query.eq("player_id", req.query.player_id as string);
-      }
-
-      const { data, error } = await query;
-      if (error) return res.status(500).json({ error: error.message });
-      return res.json({ payments: data || [] });
+      let all = await financeRead(supabase, "finance_payments");
+      if (req.query.event_id) all = all.filter((p: any) => p.finance_event_id === req.query.event_id);
+      if (req.query.player_id) all = all.filter((p: any) => p.player_id === req.query.player_id);
+      const sorted = [...all].sort((a: any, b: any) => b.payment_date?.localeCompare(a.payment_date));
+      return res.json({ payments: sorted });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message });
     }
   });
 
   // ----------------------------------------------------------
-  // POST /api/finance/payments — Record a payment
+  // POST /api/finance/payments
   // ----------------------------------------------------------
   app.post("/api/finance/payments", async (req, res) => {
     try {
@@ -505,10 +486,7 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
 
       const id = genId("pay");
       const record = {
-        id,
-        finance_event_id,
-        player_id,
-        player_name,
+        id, finance_event_id, player_id, player_name,
         amount: parseFloat(amount),
         payment_date: payment_date || new Date().toISOString().split("T")[0],
         payment_method: payment_method || "transfer",
@@ -518,12 +496,15 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
         created_at: new Date().toISOString(),
       };
 
-      const { error } = await supabase.from("finance_payments").insert(record);
-      if (error) return res.status(500).json({ error: error.message });
+      const payments = await financeRead(supabase, "finance_payments");
+      payments.push(record);
+      await financeWrite(supabase, "finance_payments", payments);
 
-      // Auto-create corresponding cash transaction income entry
-      await supabase.from("finance_cash_transactions").insert({
-        id: genId("cash"),
+      // Auto-create cash income entry
+      const cashId = genId("cash");
+      const cashTx = await financeRead(supabase, "finance_cash");
+      cashTx.push({
+        id: cashId,
         transaction_date: record.payment_date,
         type: "income",
         category: "member_payment",
@@ -534,6 +515,7 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
         recorded_by: "admin",
         created_at: new Date().toISOString(),
       });
+      await financeWrite(supabase, "finance_cash", cashTx);
 
       await writeAuditLog(supabase, "finance_payments", id, "create", null, record);
       return res.json({ success: true, id });
@@ -543,28 +525,22 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   });
 
   // ----------------------------------------------------------
-  // DELETE /api/finance/payments/:id — Delete a payment
+  // DELETE /api/finance/payments/:id
   // ----------------------------------------------------------
   app.delete("/api/finance/payments/:id", async (req, res) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
 
-      const { data: oldRecord } = await supabase
-        .from("finance_payments")
-        .select("*")
-        .eq("id", req.params.id)
-        .maybeSingle();
+      const payments = await financeRead(supabase, "finance_payments");
+      const old = payments.find((p: any) => p.id === req.params.id);
+      await financeWrite(supabase, "finance_payments", payments.filter((p: any) => p.id !== req.params.id));
 
-      const { error } = await supabase.from("finance_payments").delete().eq("id", req.params.id);
-      if (error) return res.status(500).json({ error: error.message });
+      // Remove auto-generated cash entry
+      const cashTx = await financeRead(supabase, "finance_cash");
+      await financeWrite(supabase, "finance_cash", cashTx.filter((t: any) => t.reference_id !== req.params.id));
 
-      // Remove corresponding auto-generated cash transaction
-      if (oldRecord) {
-        await supabase.from("finance_cash_transactions").delete().eq("reference_id", req.params.id);
-      }
-
-      await writeAuditLog(supabase, "finance_payments", req.params.id, "delete", oldRecord, null);
+      await writeAuditLog(supabase, "finance_payments", req.params.id, "delete", old, null);
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message });
@@ -572,30 +548,23 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   });
 
   // ----------------------------------------------------------
-  // GET /api/finance/cash — Get cash transactions
+  // GET /api/finance/cash
   // ----------------------------------------------------------
   app.get("/api/finance/cash", async (req, res) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return res.json({ transactions: [] });
-
-      let query = supabase
-        .from("finance_cash_transactions")
-        .select("*")
-        .order("transaction_date", { ascending: false });
-
-      if (req.query.type) query = query.eq("type", req.query.type as string);
-
-      const { data, error } = await query;
-      if (error) return res.status(500).json({ error: error.message });
-      return res.json({ transactions: data || [] });
+      let all = await financeRead(supabase, "finance_cash");
+      if (req.query.type) all = all.filter((t: any) => t.type === req.query.type);
+      const sorted = [...all].sort((a: any, b: any) => b.transaction_date?.localeCompare(a.transaction_date));
+      return res.json({ transactions: sorted });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message });
     }
   });
 
   // ----------------------------------------------------------
-  // POST /api/finance/cash — Add manual cash transaction
+  // POST /api/finance/cash
   // ----------------------------------------------------------
   app.post("/api/finance/cash", async (req, res) => {
     try {
@@ -611,9 +580,7 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
       const record = {
         id,
         transaction_date: transaction_date || new Date().toISOString().split("T")[0],
-        type,
-        category,
-        description,
+        type, category, description,
         amount: parseFloat(amount),
         finance_event_id: finance_event_id || null,
         reference_id: null,
@@ -621,10 +588,10 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
         created_at: new Date().toISOString(),
       };
 
-      const { error } = await supabase.from("finance_cash_transactions").insert(record);
-      if (error) return res.status(500).json({ error: error.message });
-
-      await writeAuditLog(supabase, "finance_cash_transactions", id, "create", null, record);
+      const cashTx = await financeRead(supabase, "finance_cash");
+      cashTx.push(record);
+      await financeWrite(supabase, "finance_cash", cashTx);
+      await writeAuditLog(supabase, "finance_cash", id, "create", null, record);
       return res.json({ success: true, id });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message });
@@ -632,23 +599,17 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   });
 
   // ----------------------------------------------------------
-  // DELETE /api/finance/cash/:id — Delete cash transaction
+  // DELETE /api/finance/cash/:id
   // ----------------------------------------------------------
   app.delete("/api/finance/cash/:id", async (req, res) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return res.status(503).json({ error: "Supabase not configured" });
 
-      const { data: oldRecord } = await supabase
-        .from("finance_cash_transactions")
-        .select("*")
-        .eq("id", req.params.id)
-        .maybeSingle();
-
-      const { error } = await supabase.from("finance_cash_transactions").delete().eq("id", req.params.id);
-      if (error) return res.status(500).json({ error: error.message });
-
-      await writeAuditLog(supabase, "finance_cash_transactions", req.params.id, "delete", oldRecord, null);
+      const cashTx = await financeRead(supabase, "finance_cash");
+      const old = cashTx.find((t: any) => t.id === req.params.id);
+      await financeWrite(supabase, "finance_cash", cashTx.filter((t: any) => t.id !== req.params.id));
+      await writeAuditLog(supabase, "finance_cash", req.params.id, "delete", old, null);
       return res.json({ success: true });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message });
@@ -656,24 +617,21 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   });
 
   // ----------------------------------------------------------
-  // GET /api/finance/balance — All members balance summary
+  // GET /api/finance/balance
   // ----------------------------------------------------------
   app.get("/api/finance/balance", async (req, res) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return res.json({ balances: [] });
 
-      const { data: participants } = await supabase
-        .from("finance_participants")
-        .select("player_id, player_name, final_charge, attendance_status");
-
-      const { data: payments } = await supabase
-        .from("finance_payments")
-        .select("player_id, player_name, amount");
+      const [participants, payments] = await Promise.all([
+        financeRead(supabase, "finance_participants"),
+        financeRead(supabase, "finance_payments"),
+      ]);
 
       const balanceMap: Record<string, any> = {};
 
-      (participants || []).forEach((p: any) => {
+      participants.forEach((p: any) => {
         if (p.attendance_status !== "hadir") return;
         if (!balanceMap[p.player_id]) {
           balanceMap[p.player_id] = { player_id: p.player_id, player_name: p.player_name, total_sessions: 0, total_charged: 0, total_paid: 0 };
@@ -682,7 +640,7 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
         balanceMap[p.player_id].total_charged += parseFloat(p.final_charge) || 0;
       });
 
-      (payments || []).forEach((pay: any) => {
+      payments.forEach((pay: any) => {
         if (!balanceMap[pay.player_id]) {
           balanceMap[pay.player_id] = { player_id: pay.player_id, player_name: pay.player_name, total_sessions: 0, total_charged: 0, total_paid: 0 };
         }
@@ -702,29 +660,23 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   });
 
   // ----------------------------------------------------------
-  // GET /api/finance/dashboard — Dashboard summary
+  // GET /api/finance/dashboard
   // ----------------------------------------------------------
   app.get("/api/finance/dashboard", async (req, res) => {
     try {
       const supabase = getSupabase();
       if (!supabase) return res.json({ summary: {} });
 
-      const [eventsRes, cashRes, participantsRes, paymentsRes] = await Promise.all([
-        supabase.from("finance_events").select("id, final_total, status"),
-        supabase.from("finance_cash_transactions").select("type, amount, transaction_date"),
-        supabase.from("finance_participants").select("player_id, player_name, final_charge, attendance_status"),
-        supabase.from("finance_payments").select("player_id, player_name, amount, payment_date"),
+      const [events, cashTx, participants, payments] = await Promise.all([
+        financeRead(supabase, "finance_events"),
+        financeRead(supabase, "finance_cash"),
+        financeRead(supabase, "finance_participants"),
+        financeRead(supabase, "finance_payments"),
       ]);
-
-      const events = eventsRes.data || [];
-      const cashTx = cashRes.data || [];
-      const participants = participantsRes.data || [];
-      const payments = paymentsRes.data || [];
 
       const totalIncome = cashTx.filter((t: any) => t.type === "income").reduce((s: number, t: any) => s + parseFloat(t.amount), 0);
       const totalExpense = cashTx.filter((t: any) => t.type === "expense").reduce((s: number, t: any) => s + parseFloat(t.amount), 0);
 
-      // Outstanding per player
       const chargeMap: Record<string, number> = {};
       const paidMap: Record<string, number> = {};
       participants.forEach((p: any) => {
@@ -735,11 +687,9 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
       payments.forEach((pay: any) => {
         paidMap[pay.player_id] = (paidMap[pay.player_id] || 0) + parseFloat(pay.amount || 0);
       });
-      const totalOutstanding = Object.keys(chargeMap).reduce((sum, pid) => {
-        return sum + Math.max(0, (chargeMap[pid] || 0) - (paidMap[pid] || 0));
-      }, 0);
+      const totalOutstanding = Object.keys(chargeMap).reduce((sum, pid) =>
+        sum + Math.max(0, (chargeMap[pid] || 0) - (paidMap[pid] || 0)), 0);
 
-      // Monthly data (last 6 months)
       const monthlyMap: Record<string, { income: number; expense: number }> = {};
       cashTx.forEach((t: any) => {
         const month = t.transaction_date?.substring(0, 7) || "unknown";
@@ -752,7 +702,6 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
         .slice(-6)
         .map(([month, data]) => ({ month, ...data }));
 
-      // Top payers
       const playerPaidMap: Record<string, { player_name: string; total_paid: number; sessions: number }> = {};
       payments.forEach((pay: any) => {
         if (!playerPaidMap[pay.player_id]) {
@@ -783,7 +732,7 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   });
 
   // ----------------------------------------------------------
-  // GET /api/finance/reports — Reports with filters
+  // GET /api/finance/reports
   // ----------------------------------------------------------
   app.get("/api/finance/reports", async (req, res) => {
     try {
@@ -792,32 +741,30 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
 
       const { from_date, to_date, event_id, player_id } = req.query;
 
-      let eventsQuery = supabase.from("finance_events").select("*").order("session_date", { ascending: false });
-      let paymentsQuery = supabase.from("finance_payments").select("*").order("payment_date", { ascending: false });
-      let cashQuery = supabase.from("finance_cash_transactions").select("*").order("transaction_date", { ascending: false });
+      let [events, payments, cashTx] = await Promise.all([
+        financeRead(supabase, "finance_events"),
+        financeRead(supabase, "finance_payments"),
+        financeRead(supabase, "finance_cash"),
+      ]);
 
       if (from_date) {
-        eventsQuery = eventsQuery.gte("session_date", from_date as string);
-        paymentsQuery = paymentsQuery.gte("payment_date", from_date as string);
-        cashQuery = cashQuery.gte("transaction_date", from_date as string);
+        events = events.filter((e: any) => e.session_date >= from_date);
+        payments = payments.filter((p: any) => p.payment_date >= from_date);
+        cashTx = cashTx.filter((t: any) => t.transaction_date >= from_date);
       }
       if (to_date) {
-        eventsQuery = eventsQuery.lte("session_date", to_date as string);
-        paymentsQuery = paymentsQuery.lte("payment_date", to_date as string);
-        cashQuery = cashQuery.lte("transaction_date", to_date as string);
+        events = events.filter((e: any) => e.session_date <= to_date);
+        payments = payments.filter((p: any) => p.payment_date <= to_date);
+        cashTx = cashTx.filter((t: any) => t.transaction_date <= to_date);
       }
-      if (event_id) eventsQuery = eventsQuery.eq("id", event_id as string);
-      if (player_id) paymentsQuery = paymentsQuery.eq("player_id", player_id as string);
+      if (event_id) events = events.filter((e: any) => e.id === event_id);
+      if (player_id) payments = payments.filter((p: any) => p.player_id === player_id);
 
-      const [eventsRes, paymentsRes, cashRes] = await Promise.all([eventsQuery, paymentsQuery, cashQuery]);
+      events.sort((a: any, b: any) => b.session_date?.localeCompare(a.session_date));
+      payments.sort((a: any, b: any) => b.payment_date?.localeCompare(a.payment_date));
+      cashTx.sort((a: any, b: any) => b.transaction_date?.localeCompare(a.transaction_date));
 
-      return res.json({
-        report: {
-          events: eventsRes.data || [],
-          payments: paymentsRes.data || [],
-          cash_transactions: cashRes.data || [],
-        }
-      });
+      return res.json({ report: { events, payments, cash_transactions: cashTx } });
     } catch (err: any) {
       return res.status(500).json({ error: err?.message });
     }
@@ -826,6 +773,8 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   // ============================================================
   // END COTTA FINANCE ROUTES
   // ============================================================
+
+  // Server-side AI Extraction API endpoint with multi-model fallback resiliency
 
   // Server-side AI Extraction API endpoint with multi-model fallback resiliency
   app.post("/api/extract-players", async (req, res) => {
