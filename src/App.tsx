@@ -632,6 +632,20 @@ export default function App() {
     showNotification(`${deletedName} berhasil dihapus.`);
   };
 
+  // Remove all players from active roster
+  const handleRemoveAllPlayers = () => {
+    if (players.length === 0) return;
+    triggerConfirm(
+      'Hapus Semua Atlet Roster',
+      'Apakah Anda benar-benar yakin ingin menghapus seluruh atlet dari roster event ini? Seluruh daftar atlet dan jadwal tanding terkait akan dikosongkan.',
+      () => {
+        setPlayers([]);
+        setMatches([]);
+        showNotification('Seluruh roster atlet berhasil dikosongkan.', 'success');
+      }
+    );
+  };
+
   // Update score of a match based on scoring settings of current event
   const handleUpdateScore = (matchId: string, s1: number, s2: number) => {
     if (s1 < 0 || s2 < 0) return;
@@ -1223,16 +1237,6 @@ export default function App() {
                 Export Jadwal
               </button>
             )}
-
-            {/* Clear Database Utility */}
-            <button
-              id="btn-clear-db"
-              onClick={handleClearAll}
-              className="px-3 py-2 text-xs font-semibold text-slate-550 hover:text-rose-450 bg-[#0c1221] hover:bg-slate-950 rounded-xl transition-all border border-slate-900 hover:border-rose-950 cursor-pointer"
-              title="Clear active state database"
-            >
-              <RotateCcw className="w-3.5 h-3.5" />
-            </button>
           </div>
         </section>
 
@@ -1318,6 +1322,7 @@ export default function App() {
                   onReorderPlayers={handleReorderPlayers}
                   onExcelUpload={handleExcelUpload}
                   onAddPlayersBatch={handleAddPlayersBatch}
+                  onRemoveAllPlayers={handleRemoveAllPlayers}
                 />
               )}
 

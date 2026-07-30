@@ -172,6 +172,7 @@ interface PlayerManagerProps {
   onReorderPlayers: (reordered: Player[]) => void;
   onExcelUpload?: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onAddPlayersBatch?: (newPlayers: { name: string; gender: GenderType; skillLevel: SkillLevelType }[]) => void;
+  onRemoveAllPlayers?: () => void;
 }
 
 export default function PlayerManager({
@@ -181,6 +182,7 @@ export default function PlayerManager({
   onReorderPlayers,
   onExcelUpload,
   onAddPlayersBatch,
+  onRemoveAllPlayers,
 }: PlayerManagerProps) {
   // New Player Form State
   const [name, setName] = React.useState('');
@@ -786,16 +788,31 @@ export default function PlayerManager({
             </p>
           </div>
 
-          <div className="relative">
-            <input
-              id="search-player-manager"
-              type="text"
-              placeholder="Cari nama..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="w-full md:w-48 bg-slate-950/80 border border-slate-850 rounded-xl py-1.5 pl-8 pr-3 text-xs text-white placeholder-slate-655 focus:outline-none focus:border-teal-400 focus:ring-1 focus:ring-teal-400/25 transition-all"
-            />
-            <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+          <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
+            <div className="relative flex-1 md:w-48">
+              <input
+                id="search-player-manager"
+                type="text"
+                placeholder="Cari nama..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="w-full bg-slate-950/80 border border-slate-850 rounded-xl py-1.5 pl-8 pr-3 text-xs text-white placeholder-slate-655 focus:outline-none focus:border-teal-400 focus:ring-1 focus:ring-teal-400/25 transition-all"
+              />
+              <Search className="w-3.5 h-3.5 text-slate-500 absolute left-2.5 top-2.5" />
+            </div>
+
+            {players.length > 0 && onRemoveAllPlayers && (
+              <button
+                id="btn-remove-all-players"
+                type="button"
+                onClick={onRemoveAllPlayers}
+                className="px-3 py-1.5 text-xs font-bold text-rose-400 hover:text-white bg-rose-500/10 hover:bg-rose-600 border border-rose-500/20 hover:border-rose-500 rounded-xl transition-all flex items-center gap-1.5 cursor-pointer shrink-0"
+                title="Hapus seluruh atlet dari roster event ini"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>Hapus Semua Atlet</span>
+              </button>
+            )}
           </div>
         </div>
 
