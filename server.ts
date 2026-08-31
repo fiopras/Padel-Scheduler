@@ -6,10 +6,20 @@ import { createClient } from "@supabase/supabase-js";
 
 dotenv.config();
 
+// Helper to parse and sanitize Supabase environment variables
+function getSupabaseConfig() {
+  let url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+  let key = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SECRET_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+  if (url) url = url.trim().replace(/^["']|["']$/g, '');
+  if (key) key = key.trim().replace(/^["']|["']$/g, '');
+
+  return { url: url || null, key: key || null };
+}
+
 // Initialize Supabase client dynamically per request to prevent serverless container schema caching
 function getSupabase() {
-  const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SECRET_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const { url, key } = getSupabaseConfig();
   if (url && key) {
     return createClient(url, key, {
       auth: { persistSession: false }
@@ -56,15 +66,14 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
   // Check Supabase DB status & health
   app.get("/api/db-status", async (req, res) => {
     try {
-      const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
-      const key = process.env.SUPABASE_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SECRET_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+      const { url, key } = getSupabaseConfig();
       const supabase = getSupabase();
 
       if (!url || !key) {
         return res.json({
           connected: false,
           storage: "in-memory-fallback",
-          reason: "SUPABASE_URL or SUPABASE_KEY/SUPABASE_SECRET_KEY environment variable is not configured on the server.",
+          reason: "SUPABASE_URL or SUPABASE_KEY environment variable is not configured on the server.",
           hint: "Add SUPABASE_URL and SUPABASE_KEY to Environment Variables in your server/Vercel settings."
         });
       }
@@ -77,21 +86,37 @@ app.use(express.urlencoded({ limit: "25mb", extended: true }));
         });
       }
 
+      let urlHost: string | null = null;
+      try {
+        urlHost = url ? new URL(url).hostname : null;
+      } catch (e) {
+        return res.json({
+          connected: false,
+          storage: "in-memory-fallback",
+          reason: `SUPABASE_URL is invalid: "${url}".`,
+          hint: "Ensure SUPABASE_URL starts with https:// (e.g. https://xyz.supabase.co)."
+        });
+      }
+
       const { data, error } = await supabase
         .from("padel_data")
         .select("id, updated_at, data")
         .eq("id", "active_state")
         .maybeSingle();
 
-      const urlHost = url ? new URL(url).hostname : null;
-
       if (error) {
+        const isFetchFailed = error.message?.includes("fetch failed") || error.message?.includes("Failed to fetch");
+        const hint = isFetchFailed
+          ? "Gagal terhubung ke server Supabase (Network/DNS/Paused Project). Jika menggunakan free tier Supabase, pastikan proyek tidak dalam status 'Paused' (Jeda) di Dashboard Supabase."
+          : "Ensure table 'padel_data' exists with schema: CREATE TABLE padel_data (id text primary key, data jsonb, updated_at timestamptz) and RLS is disabled.";
+
         return res.json({
           connected: false,
           storage: "in-memory-fallback",
           urlHost,
-          reason: `Supabase database error: ${error.message} (Code: ${error.code})`,
-          hint: "Ensure table 'padel_data' exists with schema: CREATE TABLE padel_data (id text primary key, data jsonb, updated_at timestamptz) and RLS is disabled."
+          isFetchFailed,
+          reason: `Supabase database error: ${error.message}${error.code ? ` (Code: ${error.code})` : ''}`,
+          hint
         });
       }
 

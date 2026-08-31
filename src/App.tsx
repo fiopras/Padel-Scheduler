@@ -25,7 +25,7 @@ import {
   Check
 } from 'lucide-react';
 import { Player, Match, TournamentConfig, GenderType, SkillLevelType, TournamentFormat, ScoringType, PadelEvent } from './types';
-import { generateSchedule, generateAdditionalRounds, recalculateLeaderboard } from './utils/scheduler';
+import { generateSchedule, generateAdditionalRounds, recalculateLeaderboard, regenerateUnplayedMatches } from './utils/scheduler';
 import {
   parsePlayersFromExcel,
   exportScheduleToExcel,
@@ -182,6 +182,8 @@ export default function App() {
     storage: string;
     reason?: string;
     hint?: string;
+    isFetchFailed?: boolean;
+    urlHost?: string | null;
   }>({ connected: false, storage: 'loading' });
 
   const [showDbSetupModal, setShowDbSetupModal] = React.useState(false);
@@ -575,6 +577,33 @@ export default function App() {
     showNotification(`Berhasil menambahkan ${additionalRounds} Round baru (${addedMatchesCount} pertandingan)! Total kini: ${newMaxRound} Round.`, 'success');
   };
 
+  // Regenerate unplayed (Scheduled) matches using current roster
+  const handleRegenerateUnplayedMatches = () => {
+    if (matches.length === 0) return;
+    const playerPointsMap: Record<string, number> = {};
+    currentLeaderboard.forEach((p) => {
+      playerPointsMap[p.id] = p.points || 0;
+    });
+
+    const updatedMatches = regenerateUnplayedMatches(players, config, matches, playerPointsMap);
+    setMatches(updatedMatches);
+    showNotification('Jadwal pertandingan mendatang (Belum Tanding) berhasil diperbarui berdasarkan roster atlet terbaru!', 'success');
+  };
+
+  // Swap / substitute player in a scheduled match
+  const handleSwapPlayerInMatch = (matchId: string, teamNum: 1 | 2, playerIdx: number, newPlayerId: string) => {
+    setMatches((prev) =>
+      prev.map((m) => {
+        if (m.id !== matchId) return m;
+        const team = teamNum === 1 ? [...m.team1] : [...m.team2];
+        team[playerIdx] = newPlayerId;
+        return teamNum === 1 ? { ...m, team1: team } : { ...m, team2: team };
+      })
+    );
+    const newPlayerName = players.find((p) => p.id === newPlayerId)?.name || 'Atlet';
+    showNotification(`Pemain di pertandingan berhasil diganti dengan ${newPlayerName}.`, 'success');
+  };
+
   // Manual player addition
   const handleAddPlayer = (newP: { name: string; gender: GenderType; skillLevel: SkillLevelType }) => {
     const player: Player = {
@@ -592,8 +621,21 @@ export default function App() {
       winRate: 0,
     };
 
-    setPlayers((prev) => [...prev, player]);
-    showNotification(`${newP.name} berhasil ditambahkan ke Roster.`);
+    const updatedPlayers = [...players, player];
+    setPlayers(updatedPlayers);
+
+    if (matches.length > 0) {
+      // Auto regenerate unplayed matches if schedule exists so new player is included smoothly
+      const playerPointsMap: Record<string, number> = {};
+      currentLeaderboard.forEach((p) => {
+        playerPointsMap[p.id] = p.points || 0;
+      });
+      const updatedMatches = regenerateUnplayedMatches(updatedPlayers, config, matches, playerPointsMap);
+      setMatches(updatedMatches);
+      showNotification(`${newP.name} berhasil ditambahkan ke Roster dan jadwal mendatang telah diperbarui!`, 'success');
+    } else {
+      showNotification(`${newP.name} berhasil ditambahkan ke Roster.`);
+    }
   };
 
   // Batch player addition from AI vision
@@ -613,8 +655,20 @@ export default function App() {
       winRate: 0,
     }));
 
-    setPlayers((prev) => [...prev, ...parsedPlayers]);
-    showNotification(`Berhasil mendeteksi & menambahkan ${newPlayersList.length} atlet dari SS Reclub! 🎾`, 'success');
+    const updatedPlayers = [...players, ...parsedPlayers];
+    setPlayers(updatedPlayers);
+
+    if (matches.length > 0) {
+      const playerPointsMap: Record<string, number> = {};
+      currentLeaderboard.forEach((p) => {
+        playerPointsMap[p.id] = p.points || 0;
+      });
+      const updatedMatches = regenerateUnplayedMatches(updatedPlayers, config, matches, playerPointsMap);
+      setMatches(updatedMatches);
+      showNotification(`Berhasil menambahkan ${newPlayersList.length} atlet & memperbarui jadwal mendatang! 🎾`, 'success');
+    } else {
+      showNotification(`Berhasil mendeteksi & menambahkan ${newPlayersList.length} atlet dari SS Reclub! 🎾`, 'success');
+    }
   };
 
   // Drag & drop sorting callback
@@ -623,13 +677,23 @@ export default function App() {
     showNotification('Posisi seeding atlet diatur ulang.');
   };
 
-  // Remove player
+  // Remove player safely without destroying completed match score history
   const handleRemovePlayer = (id: string) => {
     const deletedName = players.find((p) => p.id === id)?.name || 'Atlet';
-    setPlayers((prev) => prev.filter((p) => p.id !== id));
-    // Filter matches that involve this deleted player to keep reference integrity
-    setMatches((prev) => prev.filter((m) => !m.team1.includes(id) && !m.team2.includes(id)));
-    showNotification(`${deletedName} berhasil dihapus.`);
+    const updatedPlayers = players.filter((p) => p.id !== id);
+    setPlayers(updatedPlayers);
+
+    if (matches.length > 0) {
+      const playerPointsMap: Record<string, number> = {};
+      currentLeaderboard.forEach((p) => {
+        if (p.id !== id) playerPointsMap[p.id] = p.points || 0;
+      });
+      const updatedMatches = regenerateUnplayedMatches(updatedPlayers, config, matches, playerPointsMap);
+      setMatches(updatedMatches);
+      showNotification(`${deletedName} dihapus dari roster. Pertandingan mendatang berhasil diperbarui (skor selesai tetap tersimpan).`, 'success');
+    } else {
+      showNotification(`${deletedName} berhasil dihapus.`);
+    }
   };
 
   // Remove all players from active roster
@@ -1334,6 +1398,8 @@ export default function App() {
                   onSetStatus={handleSetStatus}
                   onResetMatch={handleResetMatch}
                   onAddRounds={handleAddRounds}
+                  onRegenerateUnplayed={handleRegenerateUnplayedMatches}
+                  onSwapPlayerInMatch={handleSwapPlayerInMatch}
                   scoringType={config.scoringType}
                   scoringValue={config.scoringValue}
                 />
@@ -1474,21 +1540,44 @@ export default function App() {
                 {!dbDetails.connected && (
                   <div className="p-4 rounded-2xl bg-amber-950/20 border border-amber-500/20 text-amber-200 space-y-3">
                     <div className="font-bold flex items-center gap-1.5 text-xs text-amber-300">
-                      <Info className="w-4 h-4" /> Instruksi Setup Tabel Supabase SQL
+                      <Info className="w-4 h-4" /> {dbDetails.isFetchFailed ? 'Panduan Solusi Koneksi (fetch failed)' : 'Instruksi Setup Tabel Supabase SQL'}
                     </div>
-                    <p className="text-[11px] text-slate-300 leading-relaxed">
-                      Jika Supabase sudah diberi `SUPABASE_URL` &amp; `SUPABASE_KEY` tetapi status masih belum terhubung, pastikan tabel <b>`padel_data`</b> sudah dibuat di <b>Supabase SQL Editor</b> dengan script ini:
-                    </p>
 
-                    <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-[10px] font-mono text-teal-300 select-all overflow-x-auto">
-                      <pre>{`CREATE TABLE IF NOT EXISTS padel_data (
+                    {dbDetails.isFetchFailed ? (
+                      <div className="space-y-2 text-[11px] text-slate-300 leading-relaxed">
+                        <p className="text-amber-200 font-semibold">
+                          Error <code className="text-rose-400 bg-rose-950/50 px-1.5 py-0.5 rounded font-mono">TypeError: fetch failed</code> menandakan server gagal menghubungi domain Supabase ({dbDetails.urlHost || 'Supabase host'}). Ini <b>bukan</b> masalah tabel SQL hilang.
+                        </p>
+                        <p className="font-bold text-slate-200 mt-2">Solusi &amp; Langkah Pengecekan:</p>
+                        <ul className="list-disc list-inside space-y-1.5 pl-1 text-slate-300">
+                          <li>
+                            <strong className="text-teal-300">Proyek Supabase Terjeda (Paused):</strong> Jika menggunakan akun gratis Supabase, proyek otomatis di-pause jika 7 hari tidak ada traffic. Buka <a href="https://supabase.com/dashboard" target="_blank" rel="noreferrer" className="text-teal-400 underline font-bold hover:text-teal-300">Dashboard Supabase</a> lalu klik <b>"Restore project"</b>.
+                          </li>
+                          <li>
+                            <strong className="text-teal-300">Format SUPABASE_URL:</strong> Pastikan di Environment Variables URL diawali <code className="text-teal-300 font-mono">https://</code>, tanpa tanda petik atau spasi di awal/akhir URL.
+                          </li>
+                          <li>
+                            <strong className="text-teal-300">Koneksi Network / Firewall:</strong> Pastikan server / local runner terhubung ke internet dan tidak memblokir HTTPS request ke Supabase.
+                          </li>
+                        </ul>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="text-[11px] text-slate-300 leading-relaxed">
+                          Jika Supabase sudah diberi <code className="text-teal-300">SUPABASE_URL</code> &amp; <code className="text-teal-300">SUPABASE_KEY</code> tetapi status masih belum terhubung, pastikan tabel <b>`padel_data`</b> sudah dibuat di <b>Supabase SQL Editor</b> dengan script ini:
+                        </p>
+
+                        <div className="bg-slate-950 p-3 rounded-xl border border-slate-800 text-[10px] font-mono text-teal-300 select-all overflow-x-auto">
+                          <pre>{`CREATE TABLE IF NOT EXISTS padel_data (
   id TEXT PRIMARY KEY,
   data JSONB NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 ALTER TABLE padel_data DISABLE ROW LEVEL SECURITY;`}</pre>
-                    </div>
+                        </div>
+                      </>
+                    )}
                   </div>
                 )}
 

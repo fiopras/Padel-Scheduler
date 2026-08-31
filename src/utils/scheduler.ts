@@ -453,6 +453,42 @@ export function generateSchedule(
 }
 
 /**
+ * Regenerates only unplayed (Scheduled) matches for existing rounds using the updated roster of players,
+ * while preserving all Completed and In Progress matches and their score history.
+ */
+export function regenerateUnplayedMatches(
+  players: Player[],
+  config: TournamentConfig,
+  existingMatches: Match[],
+  playerPointsMap?: Record<string, number>
+): Match[] {
+  const fixedMatches = existingMatches.filter((m) => m.status === 'Completed' || m.status === 'In Progress');
+  const scheduledMatches = existingMatches.filter((m) => m.status === 'Scheduled');
+
+  if (scheduledMatches.length === 0) return existingMatches;
+
+  const scheduledRounds = Array.from(new Set(scheduledMatches.map((m) => m.round))).sort((a, b) => a - b);
+  if (scheduledRounds.length === 0) return existingMatches;
+
+  let currentMatches = [...fixedMatches];
+
+  for (const r of scheduledRounds) {
+    const updated = generateAdditionalRounds(players, config, 1, currentMatches, playerPointsMap);
+    const addedMatches = updated.slice(currentMatches.length);
+    if (addedMatches.length > 0) {
+      const remappedMatches = addedMatches.map((m) => ({
+        ...m,
+        round: r,
+        timestamp: `Round ${r} • ${m.courtName}`
+      }));
+      currentMatches = [...currentMatches, ...remappedMatches];
+    }
+  }
+
+  return currentMatches;
+}
+
+/**
  * Re-evaluate dynamic leaderboard statistics based on matches played
  */
 export function recalculateLeaderboard(

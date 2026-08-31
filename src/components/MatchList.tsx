@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Check, RotateCcw, Calendar, Swords, Plus, Minus, Search, Landmark } from 'lucide-react';
+import { Play, Check, RotateCcw, Calendar, Swords, Plus, Minus, Search, Landmark, RefreshCw } from 'lucide-react';
 import { Match, Player } from '../types';
 
 function OngoingMatchTimer({ startTime }: { startTime?: number }) {
@@ -39,6 +39,8 @@ interface MatchListProps {
   onSetStatus: (matchId: string, status: 'Scheduled' | 'In Progress' | 'Completed') => void;
   onResetMatch: (matchId: string) => void;
   onAddRounds?: (count: number) => void;
+  onRegenerateUnplayed?: () => void;
+  onSwapPlayerInMatch?: (matchId: string, teamNum: 1 | 2, playerIdx: number, newPlayerId: string) => void;
   scoringType?: 'BestOf' | 'RaceTo';
   scoringValue?: number;
 }
@@ -50,6 +52,8 @@ export default function MatchList({
   onSetStatus,
   onResetMatch,
   onAddRounds,
+  onRegenerateUnplayed,
+  onSwapPlayerInMatch,
   scoringType = 'BestOf',
   scoringValue = 4
 }: MatchListProps) {
@@ -170,16 +174,31 @@ export default function MatchList({
               </button>
             ))}
 
-            {onAddRounds && (
-              <button
-                id="btn-matchlist-add-round"
-                onClick={() => onAddRounds(1)}
-                className="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/30 transition-all shrink-0 font-display flex items-center gap-1.5 active:scale-95 cursor-pointer ml-auto"
-                title="Tambah 1 Putaran (Round) Baru ke Jadwal Aktif"
-              >
-                <Plus className="w-3.5 h-3.5" /> + Tambah Round
-              </button>
-            )}
+            <div className="flex items-center gap-2 shrink-0 ml-auto flex-wrap sm:flex-nowrap">
+              {onRegenerateUnplayed && matches.some((m) => m.status === 'Scheduled') && (
+                <button
+                  id="btn-matchlist-sync-unplayed"
+                  type="button"
+                  onClick={onRegenerateUnplayed}
+                  className="px-3 py-2 rounded-xl text-xs font-bold bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 transition-all font-display flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                  title="Perbarui Jadwal Belum Tanding berdasarkan perubahan Roster Atlet"
+                >
+                  <RefreshCw className="w-3.5 h-3.5 text-indigo-400" /> Perbarui Belum Tanding
+                </button>
+              )}
+
+              {onAddRounds && (
+                <button
+                  id="btn-matchlist-add-round"
+                  type="button"
+                  onClick={() => onAddRounds(1)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/30 transition-all font-display flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                  title="Tambah 1 Putaran (Round) Baru ke Jadwal Aktif"
+                >
+                  <Plus className="w-3.5 h-3.5" /> + Tambah Round
+                </button>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -254,8 +273,25 @@ export default function MatchList({
                   {/* Team 1 Players Names */}
                   <div className="text-center sm:text-right pr-0 sm:pr-2 sm:col-span-4 w-full min-w-0">
                     {team1P.map((p, idx) => (
-                      <div key={idx} className="text-xs font-semibold text-white truncate px-1" title={p?.name}>
-                        {p?.name || 'N/A'}
+                      <div key={idx} className="my-0.5">
+                        {m.status === 'Scheduled' && onSwapPlayerInMatch ? (
+                          <select
+                            value={m.team1[idx] || ''}
+                            onChange={(e) => onSwapPlayerInMatch(m.id, 1, idx, e.target.value)}
+                            className="bg-slate-950/90 text-teal-300 border border-slate-800 hover:border-teal-500 text-[11px] font-semibold rounded-lg px-2 py-0.5 max-w-full focus:outline-none focus:border-teal-400 cursor-pointer shadow-sm"
+                            title="Ganti atlet pada pertandingan ini"
+                          >
+                            {players.map((pl) => (
+                              <option key={pl.id} value={pl.id}>
+                                {pl.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="text-xs font-semibold text-white truncate px-1" title={p?.name}>
+                            {p?.name || 'N/A'}
+                          </div>
+                        )}
                       </div>
                     ))}
                     <div className="text-[9px] text-[#A0AEC0] font-bold mt-1 font-display uppercase tracking-wider">TEAM 1</div>
@@ -289,8 +325,25 @@ export default function MatchList({
                   {/* Team 2 Players Names */}
                   <div className="text-center sm:text-left pl-0 sm:pl-2 sm:col-span-4 w-full min-w-0">
                     {team2P.map((p, idx) => (
-                      <div key={idx} className="text-xs font-semibold text-white truncate px-1" title={p?.name}>
-                        {p?.name || 'N/A'}
+                      <div key={idx} className="my-0.5">
+                        {m.status === 'Scheduled' && onSwapPlayerInMatch ? (
+                          <select
+                            value={m.team2[idx] || ''}
+                            onChange={(e) => onSwapPlayerInMatch(m.id, 2, idx, e.target.value)}
+                            className="bg-slate-950/90 text-teal-300 border border-slate-800 hover:border-teal-500 text-[11px] font-semibold rounded-lg px-2 py-0.5 max-w-full focus:outline-none focus:border-teal-400 cursor-pointer shadow-sm"
+                            title="Ganti atlet pada pertandingan ini"
+                          >
+                            {players.map((pl) => (
+                              <option key={pl.id} value={pl.id}>
+                                {pl.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <div className="text-xs font-semibold text-white truncate px-1" title={p?.name}>
+                            {p?.name || 'N/A'}
+                          </div>
+                        )}
                       </div>
                     ))}
                     <div className="text-[9px] text-[#A0AEC0] font-bold mt-1 font-display uppercase tracking-wider font-sans">TEAM 2</div>
