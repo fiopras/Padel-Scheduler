@@ -713,6 +713,12 @@ export default function App() {
   // Update score of a match based on scoring settings of current event
   const handleUpdateScore = (matchId: string, s1: number, s2: number) => {
     if (s1 < 0 || s2 < 0) return;
+    const isBestOf = config.scoringType === 'BestOf' || !config.scoringType;
+    const maxVal = config.scoringValue || 4;
+
+    if (isBestOf && s1 + s2 > maxVal) {
+      return;
+    }
 
     setMatches((prev) =>
       prev.map((m) =>
@@ -1400,6 +1406,8 @@ export default function App() {
                   onAddRounds={handleAddRounds}
                   onRegenerateUnplayed={handleRegenerateUnplayedMatches}
                   onSwapPlayerInMatch={handleSwapPlayerInMatch}
+                  onAddPlayer={handleAddPlayer}
+                  onRemovePlayer={handleRemovePlayer}
                   scoringType={config.scoringType}
                   scoringValue={config.scoringValue}
                 />

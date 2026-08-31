@@ -1,7 +1,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Play, Check, RotateCcw, Calendar, Swords, Plus, Minus, Search, Landmark, RefreshCw } from 'lucide-react';
-import { Match, Player } from '../types';
+import { Play, Check, RotateCcw, Calendar, Swords, Plus, Minus, Search, Landmark, RefreshCw, UserPlus, Trash2, X } from 'lucide-react';
+import { Match, Player, GenderType, SkillLevelType } from '../types';
 
 function OngoingMatchTimer({ startTime }: { startTime?: number }) {
   const [elapsed, setElapsed] = React.useState(0);
@@ -41,6 +41,8 @@ interface MatchListProps {
   onAddRounds?: (count: number) => void;
   onRegenerateUnplayed?: () => void;
   onSwapPlayerInMatch?: (matchId: string, teamNum: 1 | 2, playerIdx: number, newPlayerId: string) => void;
+  onAddPlayer?: (player: { name: string; gender: GenderType; skillLevel: SkillLevelType }) => void;
+  onRemovePlayer?: (id: string) => void;
   scoringType?: 'BestOf' | 'RaceTo';
   scoringValue?: number;
 }
@@ -54,6 +56,8 @@ export default function MatchList({
   onAddRounds,
   onRegenerateUnplayed,
   onSwapPlayerInMatch,
+  onAddPlayer,
+  onRemovePlayer,
   scoringType = 'BestOf',
   scoringValue = 4
 }: MatchListProps) {
@@ -61,6 +65,13 @@ export default function MatchList({
   const [courtFilter, setCourtFilter] = React.useState<string>('All');
   const [statusFilter, setStatusFilter] = React.useState<string>('All');
   const [playerSearch, setPlayerSearch] = React.useState<string>('');
+
+  // Modals state for on-the-fly roster management
+  const [isAddPlayerOpen, setIsAddPlayerOpen] = React.useState(false);
+  const [isManagePlayersOpen, setIsManagePlayersOpen] = React.useState(false);
+  const [newPlayerName, setNewPlayerName] = React.useState('');
+  const [newPlayerGender, setNewPlayerGender] = React.useState<GenderType>('Laki-laki');
+  const [newPlayerSkill, setNewPlayerSkill] = React.useState<SkillLevelType>('Intermediate');
 
   // Player Map lookup
   const playerMap = new Map(players.map((p) => [p.id, p]));
@@ -175,6 +186,30 @@ export default function MatchList({
             ))}
 
             <div className="flex items-center gap-2 shrink-0 ml-auto flex-wrap sm:flex-nowrap">
+              {onAddPlayer && (
+                <button
+                  id="btn-matchlist-add-player"
+                  type="button"
+                  onClick={() => setIsAddPlayerOpen(true)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-teal-500/10 hover:bg-teal-500/20 text-teal-400 border border-teal-500/30 transition-all font-display flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                  title="Tambah Atlet Baru & Perbarui Jadwal Mendatang"
+                >
+                  <UserPlus className="w-3.5 h-3.5" /> + Tambah Atlet
+                </button>
+              )}
+
+              {onRemovePlayer && players.length > 0 && (
+                <button
+                  id="btn-matchlist-manage-players"
+                  type="button"
+                  onClick={() => setIsManagePlayersOpen(true)}
+                  className="px-3.5 py-2 rounded-xl text-xs font-extrabold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/30 transition-all font-display flex items-center gap-1.5 active:scale-95 cursor-pointer"
+                  title="Kelola / Hapus Atlet dari Roster Event"
+                >
+                  <Trash2 className="w-3.5 h-3.5" /> Hapus Atlet
+                </button>
+              )}
+
               {onRegenerateUnplayed && matches.some((m) => m.status === 'Scheduled') && (
                 <button
                   id="btn-matchlist-sync-unplayed"
@@ -274,24 +309,9 @@ export default function MatchList({
                   <div className="text-center sm:text-right pr-0 sm:pr-2 sm:col-span-4 w-full min-w-0">
                     {team1P.map((p, idx) => (
                       <div key={idx} className="my-0.5">
-                        {m.status === 'Scheduled' && onSwapPlayerInMatch ? (
-                          <select
-                            value={m.team1[idx] || ''}
-                            onChange={(e) => onSwapPlayerInMatch(m.id, 1, idx, e.target.value)}
-                            className="bg-slate-950/90 text-teal-300 border border-slate-800 hover:border-teal-500 text-[11px] font-semibold rounded-lg px-2 py-0.5 max-w-full focus:outline-none focus:border-teal-400 cursor-pointer shadow-sm"
-                            title="Ganti atlet pada pertandingan ini"
-                          >
-                            {players.map((pl) => (
-                              <option key={pl.id} value={pl.id}>
-                                {pl.name}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <div className="text-xs font-semibold text-white truncate px-1" title={p?.name}>
-                            {p?.name || 'N/A'}
-                          </div>
-                        )}
+                        <div className="text-xs font-semibold text-white truncate px-1" title={p?.name}>
+                          {p?.name || 'N/A'}
+                        </div>
                       </div>
                     ))}
                     <div className="text-[9px] text-[#A0AEC0] font-bold mt-1 font-display uppercase tracking-wider">TEAM 1</div>
@@ -326,24 +346,9 @@ export default function MatchList({
                   <div className="text-center sm:text-left pl-0 sm:pl-2 sm:col-span-4 w-full min-w-0">
                     {team2P.map((p, idx) => (
                       <div key={idx} className="my-0.5">
-                        {m.status === 'Scheduled' && onSwapPlayerInMatch ? (
-                          <select
-                            value={m.team2[idx] || ''}
-                            onChange={(e) => onSwapPlayerInMatch(m.id, 2, idx, e.target.value)}
-                            className="bg-slate-950/90 text-teal-300 border border-slate-800 hover:border-teal-500 text-[11px] font-semibold rounded-lg px-2 py-0.5 max-w-full focus:outline-none focus:border-teal-400 cursor-pointer shadow-sm"
-                            title="Ganti atlet pada pertandingan ini"
-                          >
-                            {players.map((pl) => (
-                              <option key={pl.id} value={pl.id}>
-                                {pl.name}
-                              </option>
-                            ))}
-                          </select>
-                        ) : (
-                          <div className="text-xs font-semibold text-white truncate px-1" title={p?.name}>
-                            {p?.name || 'N/A'}
-                          </div>
-                        )}
+                        <div className="text-xs font-semibold text-white truncate px-1" title={p?.name}>
+                          {p?.name || 'N/A'}
+                        </div>
                       </div>
                     ))}
                     <div className="text-[9px] text-[#A0AEC0] font-bold mt-1 font-display uppercase tracking-wider font-sans">TEAM 2</div>
@@ -357,15 +362,15 @@ export default function MatchList({
                       const totalSets = (m.score1 ?? 0) + (m.score2 ?? 0);
                       const isBestOf = scoringType === 'BestOf';
                       
-                      const t1PlusDisabled = false;
-                      const t2PlusDisabled = false;
+                      const t1PlusDisabled = isBestOf ? totalSets >= scoringValue : (m.score1 ?? 0) >= scoringValue;
+                      const t2PlusDisabled = isBestOf ? totalSets >= scoringValue : (m.score2 ?? 0) >= scoringValue;
 
                       const sumLabel = isBestOf 
                         ? `${totalSets}/${scoringValue} Set` 
                         : `${m.score1 ?? 0} - ${m.score2 ?? 0} Games`;
 
                       const infoTitle = isBestOf 
-                        ? `Best of ${scoringValue} (Maksimal total ${scoringValue} set)` 
+                        ? `Best of ${scoringValue} (Maksimal total ${scoringValue} set terkunci)` 
                         : `Race to ${scoringValue}`;
 
                       return (
@@ -492,6 +497,160 @@ export default function MatchList({
           })
         )}
       </div>
+
+      {/* Modal 1: Tambah Atlet Modal */}
+      {isAddPlayerOpen && onAddPlayer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#121B2E] border border-slate-800 rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+              <h4 className="text-base font-bold text-white flex items-center gap-2 font-display uppercase tracking-tight">
+                <UserPlus className="w-4 h-4 text-teal-400" /> Tambah Atlet Ke Event
+              </h4>
+              <button
+                type="button"
+                onClick={() => setIsAddPlayerOpen(false)}
+                className="text-slate-450 hover:text-white p-1 rounded-lg hover:bg-slate-900 transition-all cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!newPlayerName.trim()) return;
+                onAddPlayer({
+                  name: newPlayerName.trim(),
+                  gender: newPlayerGender,
+                  skillLevel: newPlayerSkill
+                });
+                setNewPlayerName('');
+                setIsAddPlayerOpen(false);
+              }}
+              className="space-y-4"
+            >
+              <div>
+                <label className="block text-xs font-bold text-slate-300 mb-1">Nama Atlet</label>
+                <input
+                  type="text"
+                  required
+                  placeholder="Contoh: Budi Prasetyo"
+                  value={newPlayerName}
+                  onChange={(e) => setNewPlayerName(e.target.value)}
+                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3.5 py-2 text-xs text-white placeholder-slate-600 focus:outline-none focus:border-teal-400"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">Gender</label>
+                  <select
+                    value={newPlayerGender}
+                    onChange={(e) => setNewPlayerGender(e.target.value as GenderType)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-teal-400 cursor-pointer"
+                  >
+                    <option value="Laki-laki">Laki-laki</option>
+                    <option value="Perempuan">Perempuan</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-300 mb-1">Skill Level</label>
+                  <select
+                    value={newPlayerSkill}
+                    onChange={(e) => setNewPlayerSkill(e.target.value as SkillLevelType)}
+                    className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-teal-400 cursor-pointer"
+                  >
+                    <option value="Beginner">Beginner</option>
+                    <option value="Intermediate">Intermediate</option>
+                    <option value="Advanced">Advanced</option>
+                    <option value="Pro">Pro</option>
+                  </select>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-400 bg-slate-950/60 p-2.5 rounded-xl border border-slate-800/80">
+                💡 Atlet baru akan dimasukkan ke roster dan jadwal pertandingan mendatang (Scheduled) akan otomatis diperbarui.
+              </p>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddPlayerOpen(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white transition-all cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-bold bg-teal-500 hover:bg-teal-400 text-slate-950 rounded-xl transition-all font-display uppercase tracking-wider cursor-pointer shadow-lg shadow-teal-500/10"
+                >
+                  Simpan & Update Jadwal
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal 2: Kelola & Hapus Atlet Modal */}
+      {isManagePlayersOpen && onRemovePlayer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#121B2E] border border-slate-800 rounded-3xl p-6 max-w-lg w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">
+              <h4 className="text-base font-bold text-white flex items-center gap-2 font-display uppercase tracking-tight">
+                <Trash2 className="w-4 h-4 text-rose-400" /> Hapus / Kelola Atlet Roster
+              </h4>
+              <button
+                type="button"
+                onClick={() => setIsManagePlayersOpen(false)}
+                className="text-slate-450 hover:text-white p-1 rounded-lg hover:bg-slate-900 transition-all cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-[11px] text-slate-400">
+              Menghapus atlet akan memperbarui pertandingan mendatang (Scheduled) secara otomatis tanpa mengubah riwayat skor pertandingan yang sudah selesai (Completed).
+            </p>
+
+            <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+              {players.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center justify-between bg-slate-950/70 border border-slate-800/80 px-3.5 py-2.5 rounded-2xl"
+                >
+                  <div>
+                    <span className="text-xs font-bold text-white">{p.name}</span>
+                    <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
+                      <span>{p.gender}</span>
+                      <span>•</span>
+                      <span className="text-teal-400">{p.skillLevel}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onRemovePlayer(p.id)}
+                    className="p-1.5 text-rose-400 hover:text-white hover:bg-rose-500/20 border border-rose-500/20 rounded-xl transition-all cursor-pointer"
+                    title={`Hapus ${p.name} dari event`}
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-end pt-2">
+              <button
+                type="button"
+                onClick={() => setIsManagePlayersOpen(false)}
+                className="px-4 py-2 text-xs font-bold bg-slate-800 hover:bg-slate-700 text-white rounded-xl transition-all cursor-pointer"
+              >
+                Selesai
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
